@@ -50,11 +50,11 @@ Setiap tugas wajib diselesaikan dengan pola:
 ---
 
 ### Fase 5: Pelaporan Terminal dan Integrasi GitHub Action
-- [ ] **Tugas 5.1**: Formatter tabel keluaran terminal (`src/reporter/terminal.ts`).
+- [x] **Tugas 5.1**: Formatter tabel keluaran terminal (`src/reporter/terminal.ts`).
   - *Komit*: `feat(pelaporan): membuat pemformat laporan tabel konsol terminal`
-- [ ] **Tugas 5.2**: Formatter ringkasan Markdown untuk PR GitHub (`src/reporter/markdown.ts`).
+- [x] **Tugas 5.2**: Formatter ringkasan Markdown untuk PR GitHub (`src/reporter/markdown.ts`).
   - *Komit*: `feat(pelaporan): menambahkan pembuat laporan komentar pull request`
-- [ ] **Tugas 5.3**: Definisi metadata GitHub Action (`action.yml`).
+- [x] **Tugas 5.3**: Definisi metadata GitHub Action (`action.yml`).
   - *Komit*: `chore(ci): mendefinisikan konfigurasi github action`
-- [ ] **Tugas 5.4**: Dokumentasi lengkap penggunaan dan diagram alur (`README.md`).
+- [x] **Tugas 5.4**: Dokumentasi lengkap penggunaan dan diagram alur (`README.md`).
   - *Komit*: `docs(readme): merilis dokumentasi lengkap penggunaan schemaguard`
