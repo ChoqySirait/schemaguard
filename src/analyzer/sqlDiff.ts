@@ -5,9 +5,8 @@
  */
 
 import { DatabaseIssue, RiskLevel, SqlRule } from '../types';
-import { SQL_RULES, getSqlRules } from '../rules/sqlRules';
+import { getSqlRules } from '../rules/sqlRules';
 import {
-  ParsedSqlFile,
   ParsedSqlStatement,
   parseSqlDirectory,
   parseSqlFile,

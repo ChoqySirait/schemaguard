@@ -178,6 +178,29 @@ describe('Recommender Engine', () => {
     expect(recs[0].target).toBe('t1');
   });
 
+  it('harus memfilter isu aman pada generateApiRecommendations', () => {
+    const issues: ApiIssue[] = [
+      {
+        ruleId: 'ENDPOINT_REMOVED',
+        path: '/v1/users',
+        method: 'DELETE',
+        riskLevel: RiskLevel.CRITICAL,
+        description: 'Endpoint dihapus'
+      },
+      {
+        ruleId: 'SAFE_PARAM',
+        path: '/v1/items',
+        method: 'GET',
+        riskLevel: RiskLevel.SAFE,
+        description: 'Parameter opsional baru'
+      }
+    ];
+
+    const recs = generateApiRecommendations(issues);
+    expect(recs.length).toBe(1);
+    expect(recs[0].target).toBe('DELETE /v1/users');
+  });
+
   it('harus menggabungkan seluruh rekomendasi dengan generateAllRecommendations', () => {
     const dbIssues: DatabaseIssue[] = [
       {
@@ -211,4 +234,3 @@ describe('Recommender Engine', () => {
     expect(recs[1].issueId).toBe('API_BREAKING_CHANGE');
   });
 });
-

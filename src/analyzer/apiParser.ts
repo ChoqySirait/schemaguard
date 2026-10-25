@@ -8,16 +8,36 @@ import * as fs from 'fs';
 import * as path from 'path';
 import YAML from 'yaml';
 
+export interface OpenApiSchemaProperty {
+  type?: string;
+  format?: string;
+  description?: string;
+  items?: OpenApiSchemaProperty;
+  properties?: Record<string, OpenApiSchemaProperty>;
+  required?: string[];
+  [key: string]: unknown;
+}
+
+export interface OpenApiSchemaObject {
+  type?: string;
+  format?: string;
+  description?: string;
+  properties?: Record<string, OpenApiSchemaProperty>;
+  required?: string[];
+  items?: OpenApiSchemaProperty;
+  [key: string]: unknown;
+}
+
 export interface OpenApiParameter {
   name: string;
   in: 'query' | 'header' | 'path' | 'cookie' | string;
   required?: boolean;
   description?: string;
-  schema?: any;
+  schema?: OpenApiSchemaObject;
 }
 
 export interface OpenApiMediaType {
-  schema?: any;
+  schema?: OpenApiSchemaObject;
 }
 
 export interface OpenApiRequestBody {
@@ -65,7 +85,7 @@ export interface OpenApiSpec {
   };
   paths: Record<string, OpenApiPathItem>;
   components?: {
-    schemas?: Record<string, any>;
+    schemas?: Record<string, OpenApiSchemaObject>;
   };
 }
 
@@ -78,19 +98,21 @@ export function parseOpenApiContent(content: string): OpenApiSpec {
     throw new Error('Konten spesifikasi OpenAPI kosong.');
   }
 
-  let parsed: any;
+  let parsed: Record<string, unknown> | null = null;
 
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
-      parsed = JSON.parse(trimmed);
-    } catch (err: any) {
-      throw new Error(`Gagal menguraikan JSON OpenAPI: ${err.message}`);
+      parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Gagal menguraikan JSON OpenAPI: ${message}`);
     }
   } else {
     try {
-      parsed = YAML.parse(trimmed);
-    } catch (err: any) {
-      throw new Error(`Gagal menguraikan YAML OpenAPI: ${err.message}`);
+      parsed = YAML.parse(trimmed) as Record<string, unknown>;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Gagal menguraikan YAML OpenAPI: ${message}`);
     }
   }
 
@@ -102,9 +124,9 @@ export function parseOpenApiContent(content: string): OpenApiSpec {
     throw new Error('Dokumen bukan spesifikasi OpenAPI atau Swagger yang valid (field openapi/swagger tidak ditemukan).');
   }
 
-  parsed.paths = parsed.paths || {};
+  parsed.paths = (parsed.paths as Record<string, OpenApiPathItem>) || {};
 
-  return parsed as OpenApiSpec;
+  return parsed as unknown as OpenApiSpec;
 }
 
 /**

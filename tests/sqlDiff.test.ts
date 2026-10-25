@@ -36,6 +36,20 @@ describe('SQL Parser & Sanitizer', () => {
     expect(statements[1].statement).toContain('DROP TABLE old_orders');
     expect(statements[1].table).toBe('old_orders');
   });
+
+  it('harus menganalisis statement individual dengan analyzeSqlStatement', () => {
+    const stmt = parseSqlStatements('DROP TABLE legacy_users;')[0];
+    const issues = analyzeSqlStatement(stmt, 'test.sql');
+    expect(issues.length).toBe(1);
+    expect(issues[0].ruleId).toBe('DROP_TABLE');
+  });
+
+  it('harus mengonstruksi ringkasan analisis dengan buildAnalysisSummary', () => {
+    const summary = buildAnalysisSummary([], 5);
+    expect(summary.totalStatements).toBe(5);
+    expect(summary.passed).toBe(true);
+    expect(summary.criticalCount).toBe(0);
+  });
 });
 
 describe('SQL Diff Engine - Anti-Pattern Detection', () => {
@@ -50,26 +64,29 @@ describe('SQL Diff Engine - Anti-Pattern Detection', () => {
   });
 
   it('harus mendeteksi DROP COLUMN sebagai pelanggaran CRITICAL', () => {
-    const sql = 'ALTER TABLE users DROP COLUMN email;';
+    const sql = 'ALTER TABLE users DROP COLUMN phone;';
     const issues = analyzeSqlText(sql);
 
     expect(issues.length).toBe(1);
     expect(issues[0].ruleId).toBe('DROP_COLUMN');
     expect(issues[0].riskLevel).toBe(RiskLevel.CRITICAL);
-    expect(issues[0].column).toBe('email');
+    expect(issues[0].table).toBe('users');
+    expect(issues[0].column).toBe('phone');
   });
 
   it('harus mendeteksi ALTER COLUMN TYPE sebagai pelanggaran CRITICAL', () => {
-    const sql = 'ALTER TABLE products ALTER COLUMN price TYPE numeric(10,2);';
+    const sql = 'ALTER TABLE orders ALTER COLUMN price TYPE NUMERIC(10,2);';
     const issues = analyzeSqlText(sql);
 
     expect(issues.length).toBe(1);
     expect(issues[0].ruleId).toBe('ALTER_COLUMN_TYPE');
     expect(issues[0].riskLevel).toBe(RiskLevel.CRITICAL);
+    expect(issues[0].table).toBe('orders');
+    expect(issues[0].column).toBe('price');
   });
 
   it('harus mendeteksi RENAME COLUMN sebagai pelanggaran CRITICAL', () => {
-    const sql = 'ALTER TABLE accounts RENAME COLUMN is_active TO status;';
+    const sql = 'ALTER TABLE accounts RENAME COLUMN username TO user_identifier;';
     const issues = analyzeSqlText(sql);
 
     expect(issues.length).toBe(1);
@@ -77,8 +94,8 @@ describe('SQL Diff Engine - Anti-Pattern Detection', () => {
     expect(issues[0].riskLevel).toBe(RiskLevel.CRITICAL);
   });
 
-  it('harus mendeteksi ADD NOT NULL tanpa DEFAULT sebagai pelanggaran CRITICAL', () => {
-    const sql = 'ALTER TABLE payments ADD COLUMN transaction_id VARCHAR(64) NOT NULL;';
+  it('harus mendeteksi ADD COLUMN NOT NULL tanpa DEFAULT sebagai pelanggaran CRITICAL', () => {
+    const sql = 'ALTER TABLE payments ADD COLUMN status VARCHAR(20) NOT NULL;';
     const issues = analyzeSqlText(sql);
 
     expect(issues.length).toBe(1);
@@ -86,8 +103,15 @@ describe('SQL Diff Engine - Anti-Pattern Detection', () => {
     expect(issues[0].riskLevel).toBe(RiskLevel.CRITICAL);
   });
 
-  it('harus mendeteksi CREATE INDEX tanpa CONCURRENTLY sebagai WARNING', () => {
-    const sql = 'CREATE INDEX idx_user_email ON users (email);';
+  it('tidak boleh menandai ADD COLUMN NOT NULL jika memiliki klausa DEFAULT', () => {
+    const sql = "ALTER TABLE payments ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'PENDING';";
+    const issues = analyzeSqlText(sql);
+
+    expect(issues.length).toBe(0);
+  });
+
+  it('harus mendeteksi pembuatan indeks non-concurrently sebagai WARNING', () => {
+    const sql = 'CREATE INDEX idx_users_email ON users (email);';
     const issues = analyzeSqlText(sql);
 
     expect(issues.length).toBe(1);
@@ -95,22 +119,17 @@ describe('SQL Diff Engine - Anti-Pattern Detection', () => {
     expect(issues[0].riskLevel).toBe(RiskLevel.WARNING);
   });
 
-  it('tidak boleh mendeteksi operasi yang aman (SAFE)', () => {
-    const sql = `
-      CREATE TABLE audit_logs (id SERIAL PRIMARY KEY, action TEXT);
-      CREATE INDEX CONCURRENTLY idx_audit_action ON audit_logs (action);
-      ALTER TABLE users ADD COLUMN phone VARCHAR(20) NULL;
-    `;
+  it('tidak boleh menandai pembuatan indeks yang menggunakan CONCURRENTLY', () => {
+    const sql = 'CREATE INDEX CONCURRENTLY idx_users_email ON users (email);';
     const issues = analyzeSqlText(sql);
+
     expect(issues.length).toBe(0);
   });
 });
 
-describe('SQL Schema Comparison (Base vs Head)', () => {
-  it('harus membandingkan head terhadap base dan mendeteksi perubahan berbahaya', () => {
-    const baseSql = `
-      CREATE TABLE users (id INT, name TEXT, email TEXT);
-    `;
+describe('SQL Diff Engine - Schema Comparison', () => {
+  it('harus mendeteksi penambahan kueri berbahaya di cabang head dibanding base', () => {
+    const baseSql = 'CREATE TABLE users (id INT, name TEXT);';
     const headSql = `
       CREATE TABLE users (id INT, name TEXT, email TEXT);
       ALTER TABLE users DROP COLUMN email;

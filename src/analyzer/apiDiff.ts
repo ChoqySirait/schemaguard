@@ -7,11 +7,11 @@
 import { ApiIssue, RiskLevel } from '../types';
 import {
   HTTP_METHODS,
-  HttpMethod,
   OpenApiOperation,
   OpenApiParameter,
+  OpenApiPathItem,
+  OpenApiSchemaObject,
   OpenApiSpec,
-  parseOpenApiContent,
   parseOpenApiFile
 } from './apiParser';
 
@@ -27,8 +27,8 @@ export interface ApiAnalysisResult {
  * Membandingkan skema respons untuk mendeteksi perubahan tipe properti atau penghapusan properti
  */
 function compareResponseSchemas(
-  baseSchema: any,
-  headSchema: any,
+  baseSchema: OpenApiSchemaObject | undefined,
+  headSchema: OpenApiSchemaObject | undefined,
   path: string,
   method: string,
   statusCode: string
@@ -56,7 +56,10 @@ function compareResponseSchemas(
   const headProps = headSchema.properties || {};
 
   for (const propName of Object.keys(baseProps)) {
-    if (!headProps[propName]) {
+    const baseProp = baseProps[propName];
+    const headProp = headProps[propName];
+
+    if (!headProp) {
       // Properti yang sebelumnya ada dihapus dari respons
       issues.push({
         ruleId: 'RESPONSE_SCHEMA_CHANGED',
@@ -66,10 +69,10 @@ function compareResponseSchemas(
         description: `Properti '${propName}' pada respons ${statusCode} telah dihapus.`,
         details: `Klien yang mengandalkan properti '${propName}' akan mengalami kegagalan parsing.`
       });
-    } else {
+    } else if (baseProp) {
       // Properti ada, periksa apakah tipe datanya diubah
-      const basePropType = baseProps[propName].type;
-      const headPropType = headProps[propName].type;
+      const basePropType = baseProp.type;
+      const headPropType = headProp.type;
       if (basePropType && headPropType && basePropType !== headPropType) {
         issues.push({
           ruleId: 'PROPERTY_TYPE_CHANGED',
@@ -227,8 +230,8 @@ export function compareOpenApiSpecs(
 
     // Periksa metode HTTP yang ada pada rute tersebut
     for (const method of HTTP_METHODS) {
-      const baseOp = (basePathItem as any)[method] as OpenApiOperation | undefined;
-      const headOp = (headPathItem as any)[method] as OpenApiOperation | undefined;
+      const baseOp = basePathItem[method as keyof OpenApiPathItem] as OpenApiOperation | undefined;
+      const headOp = headPathItem[method as keyof OpenApiPathItem] as OpenApiOperation | undefined;
 
       if (baseOp && !headOp) {
         // Metode HTTP dihapus dari rute
