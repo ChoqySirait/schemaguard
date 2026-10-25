@@ -212,6 +212,10 @@ export function parseSqlStatements(rawSql: string): ParsedSqlStatement[] {
  */
 export function parseSqlFile(filePath: string): ParsedSqlFile {
   const absolutePath = path.resolve(filePath);
+  if (!fs.existsSync(absolutePath)) {
+    throw new Error(`Berkas SQL migrasi tidak ditemukan: ${filePath}`);
+  }
+
   const content = fs.readFileSync(absolutePath, 'utf-8');
   const statements = parseSqlStatements(content);
 

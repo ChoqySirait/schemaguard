@@ -12,6 +12,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import {
   ApiIssue,
+  BaseCliOptions,
   CheckApiOptions,
   CheckDbOptions,
   CliOptions,
@@ -30,7 +31,7 @@ import { generateAllRecommendations } from './recommender/engine';
 import { printTerminalReport } from './reporter/terminal';
 import { renderMarkdownReport, saveMarkdownReport } from './reporter/markdown';
 
-export const program = new Command();
+export const program: Command = new Command();
 
 program
   .name('schemaguard')
@@ -45,24 +46,24 @@ function calculateSummary(
   apiIssues: ApiIssue[],
   failOn: RiskLevel = RiskLevel.CRITICAL
 ): ReportSummary {
-  let critical = 0;
-  let warning = 0;
-  let safe = 0;
+  let critical: number = 0;
+  let warning: number = 0;
+  let safe: number = 0;
 
-  for (const i of dbIssues) {
-    if (i.riskLevel === RiskLevel.CRITICAL) critical++;
-    else if (i.riskLevel === RiskLevel.WARNING) warning++;
+  for (const issue of dbIssues) {
+    if (issue.riskLevel === RiskLevel.CRITICAL) critical++;
+    else if (issue.riskLevel === RiskLevel.WARNING) warning++;
     else safe++;
   }
 
-  for (const i of apiIssues) {
-    if (i.riskLevel === RiskLevel.CRITICAL) critical++;
-    else if (i.riskLevel === RiskLevel.WARNING) warning++;
+  for (const issue of apiIssues) {
+    if (issue.riskLevel === RiskLevel.CRITICAL) critical++;
+    else if (issue.riskLevel === RiskLevel.WARNING) warning++;
     else safe++;
   }
 
-  const totalIssues = dbIssues.length + apiIssues.length;
-  let passed = true;
+  const totalIssues: number = dbIssues.length + apiIssues.length;
+  let passed: boolean = true;
 
   if (failOn === RiskLevel.CRITICAL && critical > 0) {
     passed = false;
@@ -84,12 +85,12 @@ function calculateSummary(
  */
 function handleReportOutput(
   report: SchemaGuardReport,
-  options: { format?: 'console' | 'json' | 'markdown' | string; output?: string }
+  options: BaseCliOptions
 ): void {
-  const format = options.format || 'console';
+  const format: string = options.format || 'console';
 
   if (format === 'json') {
-    const jsonStr = JSON.stringify(report, null, 2);
+    const jsonStr: string = JSON.stringify(report, null, 2);
     if (options.output) {
       fs.writeFileSync(options.output, jsonStr, 'utf-8');
       console.log(chalk.green(`Laporan JSON berhasil disimpan ke: ${options.output}`));
@@ -97,7 +98,7 @@ function handleReportOutput(
       console.log(jsonStr);
     }
   } else if (format === 'markdown') {
-    const mdStr = renderMarkdownReport(report);
+    const mdStr: string = renderMarkdownReport(report);
     if (options.output) {
       saveMarkdownReport(report, options.output);
       console.log(chalk.green(`Laporan Markdown berhasil disimpan ke: ${options.output}`));
@@ -127,41 +128,67 @@ program
   .option('--format <type>', 'Format pelaporan (console, json, markdown)', 'console')
   .option('-o, --output <path>', 'Jalur penyimpanan berkas laporan keluaran')
   .option('--fail-on <level>', 'Gagalkan proses jika risiko mencapai batas ini (CRITICAL, WARNING)', 'CRITICAL')
-  .action((options: CheckDbOptions) => {
-    if (!options.file && !options.dir) {
-      console.error(chalk.red('Galat: Harap tentukan --file atau --dir untuk dipindai.'));
-      process.exitCode = 1;
-      return;
-    }
+  .action((options: CheckDbOptions): void => {
+    try {
+      if (!options.file && !options.dir) {
+        console.error(chalk.red('Galat: Harap tentukan --file atau --dir untuk dipindai.'));
+        process.exitCode = 1;
+        return;
+      }
 
-    let issues: DatabaseIssue[] = [];
+      let issues: DatabaseIssue[] = [];
 
-    if (options.base && options.file) {
-      const baseSql = fs.readFileSync(options.base, 'utf-8');
-      const headSql = fs.readFileSync(options.file, 'utf-8');
-      const diffResult = compareSqlDiff(baseSql, headSql, options.file);
-      issues = diffResult.issues;
-    } else if (options.file) {
-      issues = analyzeSingleSqlFile(options.file);
-    } else if (options.dir) {
-      issues = analyzeSqlDir(options.dir);
-    }
+      if (options.base && options.file) {
+        if (!fs.existsSync(options.base)) {
+          console.error(chalk.red(`Galat: Berkas skema dasar tidak ditemukan: ${options.base}`));
+          process.exitCode = 1;
+          return;
+        }
+        if (!fs.existsSync(options.file)) {
+          console.error(chalk.red(`Galat: Berkas SQL migrasi tidak ditemukan: ${options.file}`));
+          process.exitCode = 1;
+          return;
+        }
+        const baseSql: string = fs.readFileSync(options.base, 'utf-8');
+        const headSql: string = fs.readFileSync(options.file, 'utf-8');
+        const diffResult = compareSqlDiff(baseSql, headSql, options.file);
+        issues = diffResult.issues;
+      } else if (options.file) {
+        if (!fs.existsSync(options.file)) {
+          console.error(chalk.red(`Galat: Berkas SQL migrasi tidak ditemukan: ${options.file}`));
+          process.exitCode = 1;
+          return;
+        }
+        issues = analyzeSingleSqlFile(options.file);
+      } else if (options.dir) {
+        if (!fs.existsSync(options.dir)) {
+          console.error(chalk.red(`Galat: Direktori migrasi tidak ditemukan: ${options.dir}`));
+          process.exitCode = 1;
+          return;
+        }
+        issues = analyzeSqlDir(options.dir);
+      }
 
-    const failOn = (options.failOn as RiskLevel) || RiskLevel.CRITICAL;
-    const summary = calculateSummary(issues, [], failOn);
-    const recommendations = generateAllRecommendations({ databaseIssues: issues });
+      const failOn: RiskLevel = (options.failOn as RiskLevel) || RiskLevel.CRITICAL;
+      const summary: ReportSummary = calculateSummary(issues, [], failOn);
+      const recommendations = generateAllRecommendations({ databaseIssues: issues });
 
-    const report: SchemaGuardReport = {
-      timestamp: new Date().toISOString(),
-      summary,
-      databaseIssues: issues,
-      apiIssues: [],
-      recommendations
-    };
+      const report: SchemaGuardReport = {
+        timestamp: new Date().toISOString(),
+        summary,
+        databaseIssues: issues,
+        apiIssues: [],
+        recommendations
+      };
 
-    handleReportOutput(report, options);
+      handleReportOutput(report, options);
 
-    if (!summary.passed) {
+      if (!summary.passed) {
+        process.exitCode = 1;
+      }
+    } catch (err: unknown) {
+      const message: string = err instanceof Error ? err.message : String(err);
+      console.error(chalk.red(`Galat saat menjalankan check-db: ${message}`));
       process.exitCode = 1;
     }
   });
@@ -178,23 +205,40 @@ program
   .option('--format <type>', 'Format pelaporan (console, json, markdown)', 'console')
   .option('-o, --output <path>', 'Jalur penyimpanan berkas laporan keluaran')
   .option('--fail-on <level>', 'Gagalkan proses jika risiko mencapai batas ini (CRITICAL, WARNING)', 'CRITICAL')
-  .action((options: CheckApiOptions) => {
-    const diffResult = compareOpenApiFiles(options.base, options.head);
-    const failOn = (options.failOn as RiskLevel) || RiskLevel.CRITICAL;
-    const summary = calculateSummary([], diffResult.issues, failOn);
-    const recommendations = generateAllRecommendations({ apiIssues: diffResult.issues });
+  .action((options: CheckApiOptions): void => {
+    try {
+      if (!fs.existsSync(options.base)) {
+        console.error(chalk.red(`Galat: Berkas OpenAPI dasar tidak ditemukan: ${options.base}`));
+        process.exitCode = 1;
+        return;
+      }
+      if (!fs.existsSync(options.head)) {
+        console.error(chalk.red(`Galat: Berkas OpenAPI target tidak ditemukan: ${options.head}`));
+        process.exitCode = 1;
+        return;
+      }
 
-    const report: SchemaGuardReport = {
-      timestamp: new Date().toISOString(),
-      summary,
-      databaseIssues: [],
-      apiIssues: diffResult.issues,
-      recommendations
-    };
+      const diffResult = compareOpenApiFiles(options.base, options.head);
+      const failOn: RiskLevel = (options.failOn as RiskLevel) || RiskLevel.CRITICAL;
+      const summary: ReportSummary = calculateSummary([], diffResult.issues, failOn);
+      const recommendations = generateAllRecommendations({ apiIssues: diffResult.issues });
 
-    handleReportOutput(report, options);
+      const report: SchemaGuardReport = {
+        timestamp: new Date().toISOString(),
+        summary,
+        databaseIssues: [],
+        apiIssues: diffResult.issues,
+        recommendations
+      };
 
-    if (!summary.passed) {
+      handleReportOutput(report, options);
+
+      if (!summary.passed) {
+        process.exitCode = 1;
+      }
+    } catch (err: unknown) {
+      const message: string = err instanceof Error ? err.message : String(err);
+      console.error(chalk.red(`Galat saat menjalankan check-api: ${message}`));
       process.exitCode = 1;
     }
   });
@@ -215,46 +259,82 @@ program
   .option('--format <type>', 'Format pelaporan (console, json, markdown)', 'console')
   .option('-o, --output <path>', 'Jalur penyimpanan berkas laporan keluaran')
   .option('--fail-on <level>', 'Gagalkan proses jika risiko mencapai batas ini (CRITICAL, WARNING)', 'CRITICAL')
-  .action((options: CliOptions) => {
-    const dbIssues: DatabaseIssue[] = [];
-    const apiIssues: ApiIssue[] = [];
+  .action((options: CliOptions): void => {
+    try {
+      const dbIssues: DatabaseIssue[] = [];
+      const apiIssues: ApiIssue[] = [];
 
-    // Evaluasi Basis Data
-    if (options.dbBase && options.dbHead) {
-      const baseSql = fs.readFileSync(options.dbBase, 'utf-8');
-      const headSql = fs.readFileSync(options.dbHead, 'utf-8');
-      const res = compareSqlDiff(baseSql, headSql, options.dbHead);
-      dbIssues.push(...res.issues);
-    } else if (options.sqlFile) {
-      dbIssues.push(...analyzeSingleSqlFile(options.sqlFile));
-    } else if (options.sqlDir) {
-      dbIssues.push(...analyzeSqlDir(options.sqlDir));
-    }
+      // Validasi keberadaan berkas sebelum dibaca
+      if (options.dbBase && options.dbHead) {
+        if (!fs.existsSync(options.dbBase)) {
+          console.error(chalk.red(`Galat: Berkas skema dasar tidak ditemukan: ${options.dbBase}`));
+          process.exitCode = 1;
+          return;
+        }
+        if (!fs.existsSync(options.dbHead)) {
+          console.error(chalk.red(`Galat: Berkas skema target tidak ditemukan: ${options.dbHead}`));
+          process.exitCode = 1;
+          return;
+        }
+        const baseSql: string = fs.readFileSync(options.dbBase, 'utf-8');
+        const headSql: string = fs.readFileSync(options.dbHead, 'utf-8');
+        const res = compareSqlDiff(baseSql, headSql, options.dbHead);
+        dbIssues.push(...res.issues);
+      } else if (options.sqlFile) {
+        if (!fs.existsSync(options.sqlFile)) {
+          console.error(chalk.red(`Galat: Berkas SQL migrasi tidak ditemukan: ${options.sqlFile}`));
+          process.exitCode = 1;
+          return;
+        }
+        dbIssues.push(...analyzeSingleSqlFile(options.sqlFile));
+      } else if (options.sqlDir) {
+        if (!fs.existsSync(options.sqlDir)) {
+          console.error(chalk.red(`Galat: Direktori migrasi SQL tidak ditemukan: ${options.sqlDir}`));
+          process.exitCode = 1;
+          return;
+        }
+        dbIssues.push(...analyzeSqlDir(options.sqlDir));
+      }
 
-    // Evaluasi Kontrak API
-    if (options.apiBase && options.apiHead) {
-      const res = compareOpenApiFiles(options.apiBase, options.apiHead);
-      apiIssues.push(...res.issues);
-    }
+      // Evaluasi Kontrak API
+      if (options.apiBase && options.apiHead) {
+        if (!fs.existsSync(options.apiBase)) {
+          console.error(chalk.red(`Galat: Berkas OpenAPI dasar tidak ditemukan: ${options.apiBase}`));
+          process.exitCode = 1;
+          return;
+        }
+        if (!fs.existsSync(options.apiHead)) {
+          console.error(chalk.red(`Galat: Berkas OpenAPI target tidak ditemukan: ${options.apiHead}`));
+          process.exitCode = 1;
+          return;
+        }
+        const res = compareOpenApiFiles(options.apiBase, options.apiHead);
+        apiIssues.push(...res.issues);
+      }
 
-    const failOn = (options.failOn as RiskLevel) || RiskLevel.CRITICAL;
-    const summary = calculateSummary(dbIssues, apiIssues, failOn);
-    const recommendations = generateAllRecommendations({
-      databaseIssues: dbIssues,
-      apiIssues
-    });
+      const failOn: RiskLevel = (options.failOn as RiskLevel) || RiskLevel.CRITICAL;
+      const summary: ReportSummary = calculateSummary(dbIssues, apiIssues, failOn);
+      const recommendations = generateAllRecommendations({
+        databaseIssues: dbIssues,
+        apiIssues
+      });
 
-    const report: SchemaGuardReport = {
-      timestamp: new Date().toISOString(),
-      summary,
-      databaseIssues: dbIssues,
-      apiIssues,
-      recommendations
-    };
+      const report: SchemaGuardReport = {
+        timestamp: new Date().toISOString(),
+        summary,
+        databaseIssues: dbIssues,
+        apiIssues,
+        recommendations
+      };
 
-    handleReportOutput(report, options);
+      handleReportOutput(report, options);
 
-    if (!summary.passed) {
+      if (!summary.passed) {
+        process.exitCode = 1;
+      }
+    } catch (err: unknown) {
+      const message: string = err instanceof Error ? err.message : String(err);
+      console.error(chalk.red(`Galat saat menjalankan scan: ${message}`));
       process.exitCode = 1;
     }
   });

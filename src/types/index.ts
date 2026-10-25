@@ -123,39 +123,43 @@ export interface SchemaGuardReport {
 }
 
 /**
+ * Opsi dasar yang digunakan bersama oleh seluruh perintah CLI
+ */
+export interface BaseCliOptions {
+  format?: 'console' | 'json' | 'markdown' | string;
+  output?: string;
+  failOn?: 'CRITICAL' | 'WARNING' | RiskLevel | string;
+}
+
+/**
  * Opsi konfigurasi eksekusi antarmuka baris perintah (CLI) check-db
  */
-export interface CheckDbOptions {
+export interface CheckDbOptions extends BaseCliOptions {
   file?: string;
   dir?: string;
   base?: string;
-  format?: 'console' | 'json' | 'markdown';
-  output?: string;
-  failOn?: 'CRITICAL' | 'WARNING';
 }
 
 /**
  * Opsi konfigurasi eksekusi antarmuka baris perintah (CLI) check-api
  */
-export interface CheckApiOptions {
+export interface CheckApiOptions extends BaseCliOptions {
   base: string;
   head: string;
-  format?: 'console' | 'json' | 'markdown';
-  output?: string;
-  failOn?: 'CRITICAL' | 'WARNING';
 }
 
 /**
  * Opsi konfigurasi eksekusi antarmuka baris perintah (CLI) scan
  */
-export interface CliOptions {
+export interface CliOptions extends BaseCliOptions {
   dbBase?: string;
   dbHead?: string;
   sqlFile?: string;
   sqlDir?: string;
   apiBase?: string;
   apiHead?: string;
-  format?: 'console' | 'json' | 'markdown';
-  output?: string;
-  failOn?: 'CRITICAL' | 'WARNING';
+  file?: string;
+  dir?: string;
+  base?: string;
+  head?: string;
 }
