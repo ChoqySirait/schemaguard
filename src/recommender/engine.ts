@@ -24,7 +24,7 @@ import {
  */
 function extractAlterTypeDetails(statement: string): { newDataType?: string } {
   const match = statement.match(
-    /\bALTER\s+(?:COLUMN\s+)?(?:[`"']?[\w]+[`"']?)\s+(?:SET\s+DATA\s+)?TYPE\s+([^;,]+)/i
+    /\bALTER\s+(?:COLUMN\s+)?(?:[`"']?[\w]+[`"']?)\s+(?:SET\s+DATA\s+)?TYPE\s+([^;]+)/i
   );
   if (match) {
     return { newDataType: match[1].trim() };
@@ -247,4 +247,3 @@ export function generateAllRecommendations(options: {
 
   return recommendations;
 }
-

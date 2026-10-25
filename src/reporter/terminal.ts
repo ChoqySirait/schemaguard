@@ -219,3 +219,4 @@ export function renderTerminalReport(report: SchemaGuardReport): string {
 export function printTerminalReport(report: SchemaGuardReport): void {
   console.log(renderTerminalReport(report));
 }
+

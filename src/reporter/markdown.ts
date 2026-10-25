@@ -223,3 +223,4 @@ export function saveMarkdownReport(report: SchemaGuardReport, outputPath: string
 
   fs.writeFileSync(resolvedPath, markdownContent, 'utf-8');
 }
+

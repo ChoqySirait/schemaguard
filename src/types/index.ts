@@ -23,6 +23,7 @@ export type SqlRuleId =
   | 'RENAME_COLUMN'
   | 'ADD_NOT_NULL_WITHOUT_DEFAULT'
   | 'CREATE_INDEX_NON_CONCURRENTLY'
+  | 'RENAME_TABLE'
   | 'GENERIC_DANGEROUS_OP';
 
 /**
@@ -122,7 +123,30 @@ export interface SchemaGuardReport {
 }
 
 /**
- * Opsi konfigurasi eksekusi antarmuka baris perintah (CLI)
+ * Opsi konfigurasi eksekusi antarmuka baris perintah (CLI) check-db
+ */
+export interface CheckDbOptions {
+  file?: string;
+  dir?: string;
+  base?: string;
+  format?: 'console' | 'json' | 'markdown';
+  output?: string;
+  failOn?: 'CRITICAL' | 'WARNING';
+}
+
+/**
+ * Opsi konfigurasi eksekusi antarmuka baris perintah (CLI) check-api
+ */
+export interface CheckApiOptions {
+  base: string;
+  head: string;
+  format?: 'console' | 'json' | 'markdown';
+  output?: string;
+  failOn?: 'CRITICAL' | 'WARNING';
+}
+
+/**
+ * Opsi konfigurasi eksekusi antarmuka baris perintah (CLI) scan
  */
 export interface CliOptions {
   dbBase?: string;

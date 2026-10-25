@@ -12,6 +12,8 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import {
   ApiIssue,
+  CheckApiOptions,
+  CheckDbOptions,
   CliOptions,
   DatabaseIssue,
   ReportSummary,
@@ -80,7 +82,10 @@ function calculateSummary(
 /**
  * Memproses dan mendistribusikan keluaran laporan
  */
-function handleReportOutput(report: SchemaGuardReport, options: { format?: string; output?: string }): void {
+function handleReportOutput(
+  report: SchemaGuardReport,
+  options: { format?: 'console' | 'json' | 'markdown' | string; output?: string }
+): void {
   const format = options.format || 'console';
 
   if (format === 'json') {
@@ -122,7 +127,7 @@ program
   .option('--format <type>', 'Format pelaporan (console, json, markdown)', 'console')
   .option('-o, --output <path>', 'Jalur penyimpanan berkas laporan keluaran')
   .option('--fail-on <level>', 'Gagalkan proses jika risiko mencapai batas ini (CRITICAL, WARNING)', 'CRITICAL')
-  .action((options) => {
+  .action((options: CheckDbOptions) => {
     if (!options.file && !options.dir) {
       console.error(chalk.red('Galat: Harap tentukan --file atau --dir untuk dipindai.'));
       process.exitCode = 1;
@@ -173,7 +178,7 @@ program
   .option('--format <type>', 'Format pelaporan (console, json, markdown)', 'console')
   .option('-o, --output <path>', 'Jalur penyimpanan berkas laporan keluaran')
   .option('--fail-on <level>', 'Gagalkan proses jika risiko mencapai batas ini (CRITICAL, WARNING)', 'CRITICAL')
-  .action((options) => {
+  .action((options: CheckApiOptions) => {
     const diffResult = compareOpenApiFiles(options.base, options.head);
     const failOn = (options.failOn as RiskLevel) || RiskLevel.CRITICAL;
     const summary = calculateSummary([], diffResult.issues, failOn);
