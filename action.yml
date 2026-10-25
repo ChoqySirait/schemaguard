@@ -1,0 +1,148 @@
+name: 'SchemaGuard Breaking Change Detector'
+description: 'Deteksi otomatis perubahan merusak (breaking changes) pada migrasi basis data SQL dan spesifikasi API OpenAPI dengan rekomendasi mitigasi bertahap zero-downtime.'
+author: 'SchemaGuard Team'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  sql-file:
+    description: 'Jalur ke berkas SQL migrasi tunggal yang akan dipindai.'
+    required: false
+  sql-dir:
+    description: 'Jalur ke direktori berkas migrasi SQL.'
+    required: false
+  db-base:
+    description: 'Jalur ke skema SQL cabang utama (base) untuk perbandingan diff.'
+    required: false
+  db-head:
+    description: 'Jalur ke skema SQL cabang fitur (head) untuk perbandingan diff.'
+    required: false
+  api-base:
+    description: 'Jalur ke spesifikasi OpenAPI referensi cabang utama (JSON/YAML).'
+    required: false
+  api-head:
+    description: 'Jalur ke spesifikasi OpenAPI baru pada cabang fitur (JSON/YAML).'
+    required: false
+  format:
+    description: 'Format keluaran pelaporan: console, json, atau markdown.'
+    required: false
+    default: 'markdown'
+  fail-on:
+    description: 'Ambang batas tingkat keparahan risiko untuk menggagalkan pipeline CI (CRITICAL atau WARNING).'
+    required: false
+    default: 'CRITICAL'
+  output-file:
+    description: 'Jalur penyimpanan berkas laporan hasil evaluasi.'
+    required: false
+    default: 'schemaguard-report.md'
+  comment-pr:
+    description: 'Apakah mengunggah ringkasan laporan sebagai komentar di Pull Request GitHub secara otomatis.'
+    required: false
+    default: 'true'
+  github-token:
+    description: 'GitHub Token (secrets.GITHUB_TOKEN) untuk otentikasi pengunggahan komentar PR.'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  passed:
+    description: 'Status kelulusan evaluasi: true jika tidak melanggar fail-on, false jika sebaliknya.'
+    value: ${{ steps.run-schemaguard.outputs.passed }}
+  critical-count:
+    description: 'Jumlah pelanggaran berkategori CRITICAL.'
+    value: ${{ steps.run-schemaguard.outputs.critical-count }}
+  warning-count:
+    description: 'Jumlah pelanggaran berkategori WARNING.'
+    value: ${{ steps.run-schemaguard.outputs.warning-count }}
+  total-issues:
+    description: 'Total seluruh temuan pelanggaran skema dan API.'
+    value: ${{ steps.run-schemaguard.outputs.total-issues }}
+  report-file:
+    description: 'Jalur berkas laporan yang berhasil dibuat.'
+    value: ${{ inputs.output-file }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Siapkan Lingkungan Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Kompilasi Proyek SchemaGuard
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        if [ ! -d "node_modules" ]; then
+          npm ci || npm install
+        fi
+        npm run build
+
+    - name: Jalankan Pemindaian SchemaGuard
+      id: run-schemaguard
+      shell: bash
+      run: |
+        ARGS="scan"
+
+        if [ -n "${{ inputs.sql-file }}" ]; then
+          ARGS="$ARGS --sql-file ${{ inputs.sql-file }}"
+        fi
+
+        if [ -n "${{ inputs.sql-dir }}" ]; then
+          ARGS="$ARGS --sql-dir ${{ inputs.sql-dir }}"
+        fi
+
+        if [ -n "${{ inputs.api-base }}" ]; then
+          ARGS="$ARGS --api-base ${{ inputs.api-base }}"
+        fi
+
+        if [ -n "${{ inputs.api-head }}" ]; then
+          ARGS="$ARGS --api-head ${{ inputs.api-head }}"
+        fi
+
+        ARGS="$ARGS --format ${{ inputs.format }} --output ${{ inputs.output-file }} --fail-on ${{ inputs.fail-on }}"
+
+        echo "Menjalankan SchemaGuard: node ${{ github.action_path }}/dist/index.js $ARGS"
+        node ${{ github.action_path }}/dist/index.js $ARGS
+
+    - name: Unggah Komentar Laporan pada Pull Request
+      if: inputs.comment-pr == 'true' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs');
+          const path = '${{ inputs.output-file }}';
+
+          if (fs.existsSync(path)) {
+            const reportBody = fs.readFileSync(path, 'utf8');
+            const botHeader = '<!-- schemaguard-pr-comment -->';
+            const fullComment = `${botHeader}\n${reportBody}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existingComment = comments.find(c => c.body.includes(botHeader));
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: fullComment,
+              });
+              console.log('Komentar PR SchemaGuard berhasil diperbarui.');
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: fullComment,
+              });
+              console.log('Komentar PR SchemaGuard baru berhasil dibuat.');
+            }
+          }
