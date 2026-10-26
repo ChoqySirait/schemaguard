@@ -30,9 +30,9 @@ Aturan Pengerjaan:
   - *Komit*: `test(api): menambahkan pengujian unit deteksi pemutusan kontrak api`
 
 ### Fase 4: Template Migrasi Aman (Expand-Contract)
-- [ ] **Tugas 4.1**: Generator skrip transisi migrasi Expand-Contract (`src/recommender/expandContract.ts`).
+- [x] **Tugas 4.1**: Generator skrip transisi migrasi Expand-Contract (`src/recommender/expandContract.ts`).
   - *Komit*: `feat(mitigasi): menambahkan generator template pola expand and contract`
-- [ ] **Tugas 4.2**: Pengujian unit generator mitigasi migrasi (`tests/recommender.test.ts`).
+- [x] **Tugas 4.2**: Pengujian unit generator mitigasi migrasi (`tests/recommender.test.ts`).
   - *Komit*: `test(mitigasi): memvalidasi hasil pembuatan skrip migrasi bertahap`
 
 ### Fase 5: Generator Laporan Web HTML & Antarmuka CLI
