@@ -5,9 +5,7 @@ import {
   generateRecommendationForApiIssue,
   generateDatabaseRecommendations,
   generateApiRecommendations,
-  generateAllRecommendations
-} from '../src/recommender/engine';
-import {
+  generateAllRecommendations,
   createDropTableRecommendation,
   createDropColumnRecommendation,
   createAlterColumnTypeRecommendation,
@@ -15,10 +13,12 @@ import {
   createAddNotNullRecommendation,
   createIndexRecommendation,
   createRenameTableRecommendation,
+  createAddColumnWithDefaultRecommendation,
+  createValidateConstraintRecommendation,
   createApiBreakingChangeRecommendation
-} from '../src/recommender/templates';
+} from '../src/recommender/expandContract';
 
-describe('Recommender Templates', () => {
+describe('Recommender Templates (Expand and Contract)', () => {
   it('harus menghasilkan rekomendasi pola Expand and Contract untuk DROP TABLE', () => {
     const rec = createDropTableRecommendation({ table: 'users' });
     expect(rec.issueId).toBe('DROP_TABLE');
@@ -95,6 +95,28 @@ describe('Recommender Templates', () => {
     expect(rec.contractPhase.script).toContain('DROP VIEW IF EXISTS old_logs');
   });
 
+  it('harus menghasilkan rekomendasi backfill bertahap untuk ADD_COLUMN_WITH_DEFAULT', () => {
+    const rec = createAddColumnWithDefaultRecommendation({
+      table: 'audit_logs',
+      column: 'logged_at',
+      dataType: 'TIMESTAMP'
+    });
+    expect(rec.issueId).toBe('ADD_COLUMN_WITH_DEFAULT');
+    expect(rec.expandPhase.script).toContain('ADD COLUMN IF NOT EXISTS logged_at TIMESTAMP NULL');
+    expect(rec.expandPhase.script).toContain('UPDATE audit_logs SET logged_at = now()');
+    expect(rec.contractPhase.script).toContain('ALTER COLUMN logged_at SET DEFAULT now()');
+  });
+
+  it('harus menghasilkan rekomendasi dua tahap NOT VALID untuk VALIDATE_CONSTRAINT', () => {
+    const rec = createValidateConstraintRecommendation({
+      table: 'order_items',
+      constraintName: 'fk_order_id'
+    });
+    expect(rec.issueId).toBe('VALIDATE_CONSTRAINT');
+    expect(rec.expandPhase.script).toContain('NOT VALID');
+    expect(rec.contractPhase.script).toContain('VALIDATE CONSTRAINT fk_order_id');
+  });
+
   it('harus menghasilkan rekomendasi transisi Sunset untuk API Breaking Changes', () => {
     const rec = createApiBreakingChangeRecommendation({
       path: '/api/v1/users',
@@ -137,6 +159,38 @@ describe('Recommender Engine', () => {
     const rec = generateRecommendationForDatabaseIssue(issue);
     expect(rec.issueId).toBe('ALTER_COLUMN_TYPE');
     expect(rec.expandPhase.script).toContain('price_new NUMERIC(10,2)');
+  });
+
+  it('harus menghasilkan rekomendasi mitigasi untuk ADD_COLUMN_WITH_DEFAULT', () => {
+    const issue: DatabaseIssue = {
+      ruleId: 'ADD_COLUMN_WITH_DEFAULT',
+      ruleName: 'Add Column With Default',
+      description: 'Default volatile',
+      statement: 'ALTER TABLE events ADD COLUMN created_at TIMESTAMP DEFAULT now();',
+      riskLevel: RiskLevel.WARNING,
+      table: 'events',
+      column: 'created_at'
+    };
+
+    const rec = generateRecommendationForDatabaseIssue(issue);
+    expect(rec.issueId).toBe('ADD_COLUMN_WITH_DEFAULT');
+    expect(rec.target).toBe('events.created_at');
+  });
+
+  it('harus menghasilkan rekomendasi mitigasi untuk VALIDATE_CONSTRAINT', () => {
+    const issue: DatabaseIssue = {
+      ruleId: 'VALIDATE_CONSTRAINT',
+      ruleName: 'Validate Constraint',
+      description: 'Constraint tanpa not valid',
+      statement: 'ALTER TABLE orders ADD CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(id);',
+      riskLevel: RiskLevel.WARNING,
+      table: 'orders',
+      column: 'fk_user'
+    };
+
+    const rec = generateRecommendationForDatabaseIssue(issue);
+    expect(rec.issueId).toBe('VALIDATE_CONSTRAINT');
+    expect(rec.target).toBe('orders.fk_user');
   });
 
   it('harus menghasilkan rekomendasi dari ApiIssue', () => {
