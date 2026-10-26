@@ -1,7 +1,8 @@
 /**
  * Parser Spesifikasi OpenAPI (YAML / JSON)
- * Bertanggung jawab membaca, memvalidasi sintaks, dan menyusun struktur data
- * dokumen spesifikasi OpenAPI 3.x (dan Swagger 2.0) untuk analisis kompatibilitas API.
+ * Bertanggung jawab membaca, memvalidasi sintaks, menyelesaikan referensi skema lokal ($ref),
+ * dan menyusun struktur data dokumen spesifikasi OpenAPI 3.x serta Swagger 2.0
+ * untuk analisis kompatibilitas API dan pemetaan dampak silang (cross-impact).
  */
 
 import * as fs from 'fs';
@@ -12,9 +13,11 @@ export interface OpenApiSchemaProperty {
   type?: string;
   format?: string;
   description?: string;
+  $ref?: string;
   items?: OpenApiSchemaProperty;
   properties?: Record<string, OpenApiSchemaProperty>;
   required?: string[];
+  enum?: (string | number | boolean)[];
   [key: string]: unknown;
 }
 
@@ -22,9 +25,13 @@ export interface OpenApiSchemaObject {
   type?: string;
   format?: string;
   description?: string;
+  $ref?: string;
   properties?: Record<string, OpenApiSchemaProperty>;
   required?: string[];
   items?: OpenApiSchemaProperty;
+  allOf?: OpenApiSchemaObject[];
+  oneOf?: OpenApiSchemaObject[];
+  anyOf?: OpenApiSchemaObject[];
   [key: string]: unknown;
 }
 
@@ -49,6 +56,7 @@ export interface OpenApiRequestBody {
 export interface OpenApiResponse {
   description?: string;
   content?: Record<string, OpenApiMediaType>;
+  schema?: OpenApiSchemaObject; // Swagger 2.0 format
 }
 
 export interface OpenApiOperation {
@@ -58,6 +66,7 @@ export interface OpenApiOperation {
   parameters?: OpenApiParameter[];
   requestBody?: OpenApiRequestBody;
   responses?: Record<string, OpenApiResponse>;
+  tags?: string[];
 }
 
 export type HttpMethod = 'get' | 'post' | 'put' | 'delete' | 'patch' | 'options' | 'head';
@@ -87,6 +96,73 @@ export interface OpenApiSpec {
   components?: {
     schemas?: Record<string, OpenApiSchemaObject>;
   };
+  definitions?: Record<string, OpenApiSchemaObject>; // Swagger 2.0
+}
+
+export interface EndpointOperationInfo {
+  path: string;
+  method: HttpMethod;
+  operation: OpenApiOperation;
+}
+
+/**
+ * Daftar metode HTTP standar yang dipindai
+ */
+export const HTTP_METHODS: HttpMethod[] = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'];
+
+/**
+ * Menyelesaikan referensi skema lokal ($ref) seperti #/components/schemas/User atau #/definitions/User
+ */
+export function resolveSchemaRef(
+  schema: OpenApiSchemaObject | OpenApiSchemaProperty | undefined,
+  spec: OpenApiSpec
+): OpenApiSchemaObject | undefined {
+  if (!schema) return undefined;
+
+  if (schema.$ref && typeof schema.$ref === 'string') {
+    const ref = schema.$ref;
+    if (ref.startsWith('#/components/schemas/')) {
+      const schemaName = ref.replace('#/components/schemas/', '');
+      const found = spec.components?.schemas?.[schemaName];
+      if (found) {
+        return resolveSchemaRef(found, spec);
+      }
+    } else if (ref.startsWith('#/definitions/')) {
+      const defName = ref.replace('#/definitions/', '');
+      const found = spec.definitions?.[defName];
+      if (found) {
+        return resolveSchemaRef(found, spec);
+      }
+    }
+  }
+
+  return schema as OpenApiSchemaObject;
+}
+
+/**
+ * Mengekstrak seluruh daftar rute dan operasi yang terdaftar pada spesifikasi OpenAPI
+ */
+export function extractAllOperations(spec: OpenApiSpec): EndpointOperationInfo[] {
+  const operations: EndpointOperationInfo[] = [];
+  const paths = spec.paths || {};
+
+  for (const pathKey of Object.keys(paths)) {
+    const pathItem = paths[pathKey];
+    if (!pathItem) continue;
+
+    for (const method of HTTP_METHODS) {
+      const op = pathItem[method as keyof OpenApiPathItem] as OpenApiOperation | undefined;
+      if (op) {
+        operations.push({
+          path: pathKey,
+          method,
+          operation: op
+        });
+      }
+    }
+  }
+
+  return operations;
 }
 
 /**
@@ -121,7 +197,9 @@ export function parseOpenApiContent(content: string): OpenApiSpec {
   }
 
   if (!parsed.openapi && !parsed.swagger) {
-    throw new Error('Dokumen bukan spesifikasi OpenAPI atau Swagger yang valid (field openapi/swagger tidak ditemukan).');
+    throw new Error(
+      'Dokumen bukan spesifikasi OpenAPI atau Swagger yang valid (field openapi/swagger tidak ditemukan).'
+    );
   }
 
   parsed.paths = (parsed.paths as Record<string, OpenApiPathItem>) || {};
@@ -141,8 +219,3 @@ export function parseOpenApiFile(filePath: string): OpenApiSpec {
   const content = fs.readFileSync(absolutePath, 'utf-8');
   return parseOpenApiContent(content);
 }
-
-/**
- * Daftar metode HTTP standar yang dipindai
- */
-export const HTTP_METHODS: HttpMethod[] = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'];
