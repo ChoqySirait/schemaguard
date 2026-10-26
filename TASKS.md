@@ -12,11 +12,11 @@ Aturan Pengerjaan:
   - *Komit*: `feat(aturan): menyusun daftar aturan mitigasi lock contention ddl`
 
 ### Fase 2: Analisis Statis Migrasi SQL
-- [ ] **Tugas 2.1**: Parser berkas DDL SQL untuk ekstraksi operasi tabel (`src/analyzer/sqlParser.ts`).
+- [x] **Tugas 2.1**: Parser berkas DDL SQL untuk ekstraksi operasi tabel (`src/analyzer/sqlParser.ts`).
   - *Komit*: `feat(parser): menambahkan parser berkas migrasi ddl sql`
-- [ ] **Tugas 2.2**: Mesin pemeriksa anomali penguncian tabel (`src/analyzer/sqlDiff.ts`).
+- [x] **Tugas 2.2**: Mesin pemeriksa anomali penguncian tabel (`src/analyzer/sqlDiff.ts`).
   - *Komit*: `feat(analisis): mengimplementasikan deteksi access exclusive lock`
-- [ ] **Tugas 2.3**: Pengujian unit audit DDL SQL (`tests/sqlDiff.test.ts`).
+- [x] **Tugas 2.3**: Pengujian unit audit DDL SQL (`tests/sqlDiff.test.ts`).
   - *Komit*: `test(sql): menambahkan unit test validasi aturan migrasi berbahaya`
 
 ### Fase 3: Deteksi Breaking Changes OpenAPI
