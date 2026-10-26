@@ -2,10 +2,15 @@
  * Parser Statis Berkas Migrasi SQL
  * Bertanggung jawab menguraikan teks skrip SQL menjadi daftar pernyataan (statements)
  * secara deterministik tanpa mengeksekusinya ke basis data nyata.
+ *
+ * Mendukung dialek PostgreSQL dan MySQL, pembersihan komentar,
+ * pemisahan pernyataan berdasar titik koma dengan pemahaman string literal,
+ * serta ekstraksi metadata operasi tabel dan kolom.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { DatabaseDialect } from '../types';
 
 export interface ParsedSqlStatement {
   statement: string;
@@ -15,6 +20,9 @@ export interface ParsedSqlStatement {
   operationType: string;
   table?: string;
   column?: string;
+  newColumn?: string;
+  targetType?: string;
+  dialect?: DatabaseDialect;
 }
 
 export interface ParsedSqlFile {
@@ -23,87 +31,205 @@ export interface ParsedSqlFile {
   statements: ParsedSqlStatement[];
 }
 
+export interface StatementMetadata {
+  operationType: string;
+  table?: string;
+  column?: string;
+  newColumn?: string;
+  targetType?: string;
+  dialect?: DatabaseDialect;
+}
+
 /**
- * Membersihkan komentar SQL (single line dan multi line) untuk analisis yang akurat
+ * Membersihkan tanda kutip pengenal (quotes) SQL seperti backtick, tanda petik ganda, atau kurung siku
+ */
+export function cleanIdentifier(identifier: string): string {
+  if (!identifier) return '';
+  const cleaned = identifier.trim().replace(/^[`"'\[]+|[`"'\]]+$/g, '');
+  // Jika identifier berbentuk schema.table, ambil bagian tabelnya jika perlu atau pertahankan
+  const dotParts = cleaned.split('.');
+  return dotParts[dotParts.length - 1].replace(/[`"'\[\]]/g, '');
+}
+
+/**
+ * Membersihkan komentar SQL (single line -- dan multi line /* *\/)
+ * dengan mempertahankan jumlah baris untuk akurasi penomoran baris.
  */
 export function stripComments(sql: string): string {
-  // Menghilangkan komentar multi-line /* ... */
   let cleaned = sql.replace(/\/\*[\s\S]*?\*\//g, (match) => {
-    // Pertahankan baris baru agar kalkulasi line number tetap sinkron
     return '\n'.repeat((match.match(/\n/g) || []).length);
   });
 
-  // Menghilangkan komentar single line -- ...
   cleaned = cleaned.replace(/--.*$/gm, '');
-
   return cleaned;
 }
 
 /**
- * Mengekstrak nama tabel dan operasi dari sebuah pernyataan SQL
+ * Mengekstrak nama tabel, kolom, dan jenis operasi dari pernyataan DDL SQL
  */
-export function extractStatementMetadata(statement: string): { operationType: string; table?: string; column?: string } {
+export function extractStatementMetadata(statement: string): StatementMetadata {
   const normalized = statement.trim().replace(/\s+/g, ' ');
 
-  // Deteksi DROP TABLE
+  // 1. Deteksi DROP TABLE
   const dropTableMatch = normalized.match(/\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([`"']?[\w.]+[`"']?)/i);
   if (dropTableMatch) {
-    const table = dropTableMatch[1].replace(/[`"']/g, '');
-    return { operationType: 'DROP_TABLE', table };
+    return {
+      operationType: 'DROP_TABLE',
+      table: cleanIdentifier(dropTableMatch[1]),
+      dialect: 'generic'
+    };
   }
 
-  // Deteksi ALTER TABLE
+  // 2. Deteksi RENAME TABLE (Sintaks MySQL / Oracle: RENAME TABLE old TO new)
+  const renameTableMysqlMatch = normalized.match(/\bRENAME\s+TABLE\s+([`"']?[\w.]+[`"']?)\s+TO\s+([`"']?[\w.]+[`"']?)/i);
+  if (renameTableMysqlMatch) {
+    return {
+      operationType: 'RENAME_TABLE',
+      table: cleanIdentifier(renameTableMysqlMatch[1]),
+      column: cleanIdentifier(renameTableMysqlMatch[2]),
+      dialect: 'mysql'
+    };
+  }
+
+  // 3. Deteksi ALTER TABLE
   const alterTableMatch = normalized.match(/\bALTER\s+TABLE\s+(?:ONLY\s+)?([`"']?[\w.]+[`"']?)\s+(.*)/i);
   if (alterTableMatch) {
-    const table = alterTableMatch[1].replace(/[`"']/g, '');
+    const table = cleanIdentifier(alterTableMatch[1]);
     const clause = alterTableMatch[2];
 
-    // DROP COLUMN
-    const dropColMatch = clause.match(/\bDROP\s+(?:COLUMN\s+)?([`"']?[\w]+[`"']?)/i);
+    // ALTER TABLE ... RENAME TO new_table
+    const renameToMatch = clause.match(/\bRENAME\s+TO\s+([`"']?[\w.]+[`"']?)/i);
+    if (renameToMatch) {
+      return {
+        operationType: 'RENAME_TABLE',
+        table,
+        column: cleanIdentifier(renameToMatch[1]),
+        dialect: 'generic'
+      };
+    }
+
+    // ALTER TABLE ... DROP COLUMN col
+    const dropColMatch = clause.match(/\bDROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?([`"']?[\w]+[`"']?)/i);
     if (dropColMatch) {
-      return { operationType: 'ALTER_TABLE_DROP_COLUMN', table, column: dropColMatch[1].replace(/[`"']/g, '') };
+      return {
+        operationType: 'ALTER_TABLE_DROP_COLUMN',
+        table,
+        column: cleanIdentifier(dropColMatch[1]),
+        dialect: 'generic'
+      };
     }
 
-    // ALTER COLUMN TYPE
-    const alterColMatch = clause.match(/\bALTER\s+(?:COLUMN\s+)?([`"']?[\w]+[`"']?)\s+(?:SET\s+DATA\s+)?TYPE\b/i);
-    if (alterColMatch) {
-      return { operationType: 'ALTER_TABLE_ALTER_COLUMN_TYPE', table, column: alterColMatch[1].replace(/[`"']/g, '') };
+    // ALTER TABLE ... ALTER COLUMN col TYPE target_type (PostgreSQL)
+    const alterColTypeMatch = clause.match(/\bALTER\s+(?:COLUMN\s+)?([`"']?[\w]+[`"']?)\s+(?:SET\s+DATA\s+)?TYPE\s+([^;]+)/i);
+    if (alterColTypeMatch) {
+      return {
+        operationType: 'ALTER_TABLE_ALTER_COLUMN_TYPE',
+        table,
+        column: cleanIdentifier(alterColTypeMatch[1]),
+        targetType: alterColTypeMatch[2].trim(),
+        dialect: 'postgresql'
+      };
     }
 
-    // RENAME COLUMN
+    // ALTER TABLE ... MODIFY COLUMN col target_type (MySQL)
+    const modifyColMatch = clause.match(/\bMODIFY\s+(?:COLUMN\s+)?([`"']?[\w]+[`"']?)\s+([^;]+)/i);
+    if (modifyColMatch) {
+      return {
+        operationType: 'ALTER_TABLE_ALTER_COLUMN_TYPE',
+        table,
+        column: cleanIdentifier(modifyColMatch[1]),
+        targetType: modifyColMatch[2].trim(),
+        dialect: 'mysql'
+      };
+    }
+
+    // ALTER TABLE ... CHANGE COLUMN old_col new_col target_type (MySQL)
+    const changeColMatch = clause.match(/\bCHANGE\s+(?:COLUMN\s+)?([`"']?[\w]+[`"']?)\s+([`"']?[\w]+[`"']?)\s+([^;]+)/i);
+    if (changeColMatch) {
+      return {
+        operationType: 'ALTER_TABLE_RENAME_COLUMN',
+        table,
+        column: cleanIdentifier(changeColMatch[1]),
+        newColumn: cleanIdentifier(changeColMatch[2]),
+        targetType: changeColMatch[3].trim(),
+        dialect: 'mysql'
+      };
+    }
+
+    // ALTER TABLE ... RENAME COLUMN old_col TO new_col (PostgreSQL)
     const renameColMatch = clause.match(/\bRENAME\s+(?:COLUMN\s+)?([`"']?[\w]+[`"']?)\s+TO\s+([`"']?[\w]+[`"']?)/i);
     if (renameColMatch) {
-      return { operationType: 'ALTER_TABLE_RENAME_COLUMN', table, column: renameColMatch[1].replace(/[`"']/g, '') };
+      return {
+        operationType: 'ALTER_TABLE_RENAME_COLUMN',
+        table,
+        column: cleanIdentifier(renameColMatch[1]),
+        newColumn: cleanIdentifier(renameColMatch[2]),
+        dialect: 'postgresql'
+      };
     }
 
-    // ADD COLUMN NOT NULL
-    const addColMatch = clause.match(/\bADD\s+(?:COLUMN\s+)?([`"']?[\w]+[`"']?)/i);
+    // ALTER TABLE ... ADD CONSTRAINT constraint_name (CHECK / FOREIGN KEY)
+    const addConstraintMatch = clause.match(/\bADD\s+CONSTRAINT\s+([`"']?[\w]+[`"']?)/i);
+    if (addConstraintMatch) {
+      return {
+        operationType: 'ALTER_TABLE_ADD_CONSTRAINT',
+        table,
+        column: cleanIdentifier(addConstraintMatch[1]),
+        dialect: 'generic'
+      };
+    }
+
+    // ALTER TABLE ... ADD COLUMN col
+    const addColMatch = clause.match(/\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([`"']?[\w]+[`"']?)/i);
     if (addColMatch) {
-      return { operationType: 'ALTER_TABLE_ADD_COLUMN', table, column: addColMatch[1].replace(/[`"']/g, '') };
+      return {
+        operationType: 'ALTER_TABLE_ADD_COLUMN',
+        table,
+        column: cleanIdentifier(addColMatch[1]),
+        dialect: 'generic'
+      };
     }
 
-    return { operationType: 'ALTER_TABLE', table };
+    return {
+      operationType: 'ALTER_TABLE',
+      table,
+      dialect: 'generic'
+    };
   }
 
-  // Deteksi CREATE INDEX
-  const createIndexMatch = normalized.match(/\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([`"']?[\w]+[`"']?)?\s+ON\s+([`"']?[\w.]+[`"']?)/i);
+  // 4. Deteksi CREATE INDEX
+  const createIndexMatch = normalized.match(
+    /\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([`"']?[\w]+[`"']?)?\s+ON\s+([`"']?[\w.]+[`"']?)/i
+  );
   if (createIndexMatch) {
-    const table = createIndexMatch[2].replace(/[`"']/g, '');
-    return { operationType: 'CREATE_INDEX', table };
+    return {
+      operationType: 'CREATE_INDEX',
+      table: cleanIdentifier(createIndexMatch[2]),
+      column: createIndexMatch[1] ? cleanIdentifier(createIndexMatch[1]) : undefined,
+      dialect: normalized.toLowerCase().includes('concurrently') ? 'postgresql' : 'generic'
+    };
   }
 
-  // Deteksi CREATE TABLE
+  // 5. Deteksi CREATE TABLE
   const createTableMatch = normalized.match(/\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"']?[\w.]+[`"']?)/i);
   if (createTableMatch) {
-    const table = createTableMatch[1].replace(/[`"']/g, '');
-    return { operationType: 'CREATE_TABLE', table };
+    return {
+      operationType: 'CREATE_TABLE',
+      table: cleanIdentifier(createTableMatch[1]),
+      dialect: 'generic'
+    };
   }
 
-  return { operationType: 'UNKNOWN' };
+  return {
+    operationType: 'UNKNOWN',
+    dialect: 'generic'
+  };
 }
 
 /**
- * Menguraikan teks SQL utuh menjadi deretan pernyataan individual dengan nomor baris
+ * Menguraikan teks SQL utuh menjadi deretan pernyataan individual dengan nomor baris yang tepat.
+ * Memperhitungkan batas string literal ('...') dan komentar agar pemisahan titik koma (;)
+ * tidak memecah nilai di dalam string atau ekspresi fungsi.
  */
 export function parseSqlStatements(rawSql: string): ParsedSqlStatement[] {
   const statements: ParsedSqlStatement[] = [];
@@ -112,43 +238,72 @@ export function parseSqlStatements(rawSql: string): ParsedSqlStatement[] {
   let currentStatement = '';
   let currentRaw = '';
   let startLine = 1;
+
+  let inSingleQuote = false;
   let inMultiLineComment = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lineNum = i + 1;
 
-    let processedLine = line;
+    let processedLine = '';
+    let j = 0;
 
-    // Sederhanakan tracking comment per line
-    if (inMultiLineComment) {
-      const endCommentIdx = processedLine.indexOf('*/');
-      if (endCommentIdx !== -1) {
-        inMultiLineComment = false;
-        processedLine = processedLine.slice(endCommentIdx + 2);
-      } else {
-        processedLine = '';
-      }
-    }
+    while (j < line.length) {
+      const char = line[j];
+      const nextChar = line[j + 1];
 
-    if (!inMultiLineComment) {
-      // Periksa start comment
-      const startCommentIdx = processedLine.indexOf('/*');
-      if (startCommentIdx !== -1) {
-        const endCommentIdx = processedLine.indexOf('*/', startCommentIdx + 2);
-        if (endCommentIdx !== -1) {
-          processedLine = processedLine.slice(0, startCommentIdx) + ' ' + processedLine.slice(endCommentIdx + 2);
+      // Di dalam multi-line comment /* ... */
+      if (inMultiLineComment) {
+        if (char === '*' && nextChar === '/') {
+          inMultiLineComment = false;
+          j += 2;
         } else {
-          inMultiLineComment = true;
-          processedLine = processedLine.slice(0, startCommentIdx);
+          j++;
         }
+        continue;
       }
 
-      // Hapus komentar single-line
-      const singleCommentIdx = processedLine.indexOf('--');
-      if (singleCommentIdx !== -1) {
-        processedLine = processedLine.slice(0, singleCommentIdx);
+      // Di dalam string literal '...'
+      if (inSingleQuote) {
+        processedLine += char;
+        if (char === "'") {
+          // Tangani escape quote '' dalam SQL
+          if (nextChar === "'") {
+            processedLine += nextChar;
+            j += 2;
+            continue;
+          }
+          inSingleQuote = false;
+        }
+        j++;
+        continue;
       }
+
+      // Cek awal multi-line comment /*
+      if (char === '/' && nextChar === '*') {
+        inMultiLineComment = true;
+        j += 2;
+        continue;
+      }
+
+      // Cek komentar satu baris --
+      if (char === '-' && nextChar === '-') {
+        // Abaikan sisa baris
+        break;
+      }
+
+      // Cek awal string literal '
+      if (char === "'") {
+        inSingleQuote = true;
+        processedLine += char;
+        j++;
+        continue;
+      }
+
+      // Karakter biasa
+      processedLine += char;
+      j++;
     }
 
     if (!currentStatement.trim() && processedLine.trim()) {
@@ -158,10 +313,11 @@ export function parseSqlStatements(rawSql: string): ParsedSqlStatement[] {
     currentStatement += (currentStatement ? '\n' : '') + processedLine;
     currentRaw += (currentRaw ? '\n' : '') + line;
 
-    // Pemisah pernyataan adalah tanda titik koma (;)
+    // Jika baris mengandung titik koma di luar string/komentar
     if (processedLine.includes(';')) {
-      const parts = currentStatement.split(';');
-      // Ada kemungkinan lebih dari 1 pernyataan dalam satu baris atau baris berakhir dengan ;
+      // Pecah pernyataan berdasarkan ';' di luar quote
+      const parts = splitStatementsBySemicolon(currentStatement);
+
       for (let p = 0; p < parts.length - 1; p++) {
         const stmtText = parts[p].trim();
         if (stmtText) {
@@ -173,7 +329,10 @@ export function parseSqlStatements(rawSql: string): ParsedSqlStatement[] {
             endLine: lineNum,
             operationType: meta.operationType,
             table: meta.table,
-            column: meta.column
+            column: meta.column,
+            newColumn: meta.newColumn,
+            targetType: meta.targetType,
+            dialect: meta.dialect
           });
         }
       }
@@ -190,7 +349,7 @@ export function parseSqlStatements(rawSql: string): ParsedSqlStatement[] {
     }
   }
 
-  // Jika tersisa pernyataan tanpa titik koma di akhir berkas
+  // Jika tersisa pernyataan tanpa titik koma penutup di akhir berkas
   if (currentStatement.trim()) {
     const meta = extractStatementMetadata(currentStatement.trim());
     statements.push({
@@ -200,11 +359,46 @@ export function parseSqlStatements(rawSql: string): ParsedSqlStatement[] {
       endLine: lines.length,
       operationType: meta.operationType,
       table: meta.table,
-      column: meta.column
+      column: meta.column,
+      newColumn: meta.newColumn,
+      targetType: meta.targetType,
+      dialect: meta.dialect
     });
   }
 
   return statements;
+}
+
+/**
+ * Memecah teks SQL berdasarkan titik koma (;) hanya ketika titik koma berada di luar string literal
+ */
+function splitStatementsBySemicolon(text: string): string[] {
+  const parts: string[] = [];
+  let currentPart = '';
+  let inQuote = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === "'") {
+      if (inQuote && nextChar === "'") {
+        currentPart += "''";
+        i++;
+        continue;
+      }
+      inQuote = !inQuote;
+      currentPart += char;
+    } else if (char === ';' && !inQuote) {
+      parts.push(currentPart);
+      currentPart = '';
+    } else {
+      currentPart += char;
+    }
+  }
+
+  parts.push(currentPart);
+  return parts;
 }
 
 /**
@@ -227,7 +421,7 @@ export function parseSqlFile(filePath: string): ParsedSqlFile {
 }
 
 /**
- * Membaca semua berkas SQL dari sebuah direktori migrasi
+ * Membaca semua berkas SQL dari sebuah direktori migrasi secara urut (alfabetis)
  */
 export function parseSqlDirectory(dirPath: string): ParsedSqlFile[] {
   const absoluteDir = path.resolve(dirPath);
