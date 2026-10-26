@@ -1,7 +1,11 @@
 /**
  * Mesin Kompatibilitas Kontrak API (OpenAPI Diff Engine)
  * Membandingkan dua spesifikasi OpenAPI (base vs head) untuk mendeteksi
- * perubahan kontrak yang merusak kompatibilitas ke belakang (backward compatibility).
+ * perubahan kontrak yang memutus kompatibilitas ke belakang (breaking changes).
+ *
+ * Mendukung deteksi penghapusan rute, penghapusan metode HTTP, penambahan parameter wajib,
+ * penghapusan status code sukses (2xx), resolusi skema komponen ($ref),
+ * dan pemutusan tipe properti respons atau array items.
  */
 
 import { ApiIssue, RiskLevel } from '../types';
@@ -12,7 +16,8 @@ import {
   OpenApiPathItem,
   OpenApiSchemaObject,
   OpenApiSpec,
-  parseOpenApiFile
+  parseOpenApiFile,
+  resolveSchemaRef
 } from './apiParser';
 
 export interface ApiAnalysisResult {
@@ -24,21 +29,32 @@ export interface ApiAnalysisResult {
 }
 
 /**
- * Membandingkan skema respons untuk mendeteksi perubahan tipe properti atau penghapusan properti
+ * Membandingkan dua skema respons (termasuk resolusi $ref dan array items)
+ * untuk mendeteksi perubahan tipe properti atau penghapusan properti.
  */
-function compareResponseSchemas(
-  baseSchema: OpenApiSchemaObject | undefined,
-  headSchema: OpenApiSchemaObject | undefined,
+export function compareResponseSchemas(
+  rawBaseSchema: OpenApiSchemaObject | undefined,
+  rawHeadSchema: OpenApiSchemaObject | undefined,
   path: string,
   method: string,
-  statusCode: string
+  statusCode: string,
+  baseSpec?: OpenApiSpec,
+  headSpec?: OpenApiSpec
 ): ApiIssue[] {
   const issues: ApiIssue[] = [];
+  if (!rawBaseSchema || !rawHeadSchema) {
+    return issues;
+  }
+
+  // Selesaikan referensi skema jika menggunakan $ref
+  const baseSchema = baseSpec ? resolveSchemaRef(rawBaseSchema, baseSpec) : rawBaseSchema;
+  const headSchema = headSpec ? resolveSchemaRef(rawHeadSchema, headSpec) : rawHeadSchema;
+
   if (!baseSchema || !headSchema) {
     return issues;
   }
 
-  // Jika tipe data level atas diubah (misal: object -> array atau string)
+  // 1. Jika tipe data level atas diubah (misal: object -> array atau string)
   if (baseSchema.type && headSchema.type && baseSchema.type !== headSchema.type) {
     issues.push({
       ruleId: 'RESPONSE_SCHEMA_CHANGED',
@@ -51,7 +67,7 @@ function compareResponseSchemas(
     return issues;
   }
 
-  // Periksa properti objek jika keduanya adalah tipe object
+  // 2. Evaluasi properti skema objek
   const baseProps = baseSchema.properties || {};
   const headProps = headSchema.properties || {};
 
@@ -66,11 +82,12 @@ function compareResponseSchemas(
         path,
         method: method.toUpperCase(),
         riskLevel: RiskLevel.CRITICAL,
+        property: propName,
         description: `Properti '${propName}' pada respons ${statusCode} telah dihapus.`,
         details: `Klien yang mengandalkan properti '${propName}' akan mengalami kegagalan parsing.`
       });
     } else if (baseProp) {
-      // Properti ada, periksa apakah tipe datanya diubah
+      // Periksa perubahan tipe data primitif properti
       const basePropType = baseProp.type;
       const headPropType = headProp.type;
       if (basePropType && headPropType && basePropType !== headPropType) {
@@ -79,11 +96,26 @@ function compareResponseSchemas(
           path,
           method: method.toUpperCase(),
           riskLevel: RiskLevel.CRITICAL,
+          property: propName,
           description: `Tipe data untuk properti '${propName}' pada respons ${statusCode} berubah dari '${basePropType}' ke '${headPropType}'.`,
           details: `Perubahan tipe data properti menyebabkan runtime type error di klien.`
         });
       }
     }
+  }
+
+  // 3. Evaluasi skema item array jika tipe adalah array
+  if (baseSchema.type === 'array' && headSchema.type === 'array' && baseSchema.items && headSchema.items) {
+    const itemIssues = compareResponseSchemas(
+      baseSchema.items as OpenApiSchemaObject,
+      headSchema.items as OpenApiSchemaObject,
+      path,
+      method,
+      statusCode,
+      baseSpec,
+      headSpec
+    );
+    issues.push(...itemIssues);
   }
 
   return issues;
@@ -92,7 +124,7 @@ function compareResponseSchemas(
 /**
  * Memeriksa parameter permintaan antara versi dasar dan target
  */
-function compareParameters(
+export function compareParameters(
   baseParams: OpenApiParameter[] = [],
   headParams: OpenApiParameter[] = [],
   path: string,
@@ -116,6 +148,7 @@ function compareParameters(
         path,
         method: method.toUpperCase(),
         riskLevel: RiskLevel.CRITICAL,
+        property: headParam.name,
         description: `Parameter wajib baru '${headParam.name}' (${headParam.in}) ditambahkan ke ${method.toUpperCase()} ${path}.`,
         details: `Klien lama yang memanggil endpoint tanpa parameter ini akan menerima respons 400 Bad Request.`
       });
@@ -128,6 +161,7 @@ function compareParameters(
         path,
         method: method.toUpperCase(),
         riskLevel: RiskLevel.CRITICAL,
+        property: headParam.name,
         description: `Parameter '${headParam.name}' (${headParam.in}) diubah dari opsional menjadi wajib pada ${method.toUpperCase()} ${path}.`,
         details: `Permintaan dari versi lama tanpa parameter ini akan ditolak server.`
       });
@@ -140,11 +174,13 @@ function compareParameters(
 /**
  * Membandingkan satu operasi endpoint spesifik antara base dan head
  */
-function compareOperation(
+export function compareOperation(
   baseOp: OpenApiOperation,
   headOp: OpenApiOperation,
   path: string,
-  method: string
+  method: string,
+  baseSpec?: OpenApiSpec,
+  headSpec?: OpenApiSpec
 ): ApiIssue[] {
   const issues: ApiIssue[] = [];
 
@@ -184,13 +220,34 @@ function compareOperation(
         continue;
       }
 
-      // Bandingkan skema konten respons jika ada
+      // Bandingkan skema konten respons jika ada (OpenAPI 3.x application/json)
       const baseContent = baseResponses[statusCode]?.content?.['application/json'];
       const headContent = headResponses[statusCode]?.content?.['application/json'];
 
       if (baseContent?.schema && headContent?.schema) {
         issues.push(
-          ...compareResponseSchemas(baseContent.schema, headContent.schema, path, method, statusCode)
+          ...compareResponseSchemas(
+            baseContent.schema,
+            headContent.schema,
+            path,
+            method,
+            statusCode,
+            baseSpec,
+            headSpec
+          )
+        );
+      } else if (baseResponses[statusCode]?.schema && headResponses[statusCode]?.schema) {
+        // Dukungan Swagger 2.0 schema langsung di bawah respons
+        issues.push(
+          ...compareResponseSchemas(
+            baseResponses[statusCode].schema,
+            headResponses[statusCode].schema,
+            path,
+            method,
+            statusCode,
+            baseSpec,
+            headSpec
+          )
         );
       }
     }
@@ -245,7 +302,7 @@ export function compareOpenApiSpecs(
         });
       } else if (baseOp && headOp) {
         // Bandingkan detail endpoint yang sama
-        issues.push(...compareOperation(baseOp, headOp, pathKey, method));
+        issues.push(...compareOperation(baseOp, headOp, pathKey, method, baseSpec, headSpec));
       }
     }
   }
