@@ -20,13 +20,13 @@ Aturan Pengerjaan:
   - *Komit*: `test(sql): menambahkan unit test validasi aturan migrasi berbahaya`
 
 ### Fase 3: Deteksi Breaking Changes OpenAPI
-- [ ] **Tugas 3.1**: Parser spesifikasi OpenAPI format JSON/YAML (`src/analyzer/apiParser.ts`).
+- [x] **Tugas 3.1**: Parser spesifikasi OpenAPI format JSON/YAML (`src/analyzer/apiParser.ts`).
   - *Komit*: `feat(parser): menyusun parser spesifikasi openapi`
-- [ ] **Tugas 3.2**: Mesin pembanding kompatibilitas kontrak API (`src/analyzer/apiDiff.ts`).
+- [x] **Tugas 3.2**: Mesin pembanding kompatibilitas kontrak API (`src/analyzer/apiDiff.ts`).
   - *Komit*: `feat(analisis): membangun deteksi breaking changes endpoint api`
-- [ ] **Tugas 3.3**: Pemetaan dampak perubahan kolom SQL ke endpoint API (`src/analyzer/crossImpact.ts`).
+- [x] **Tugas 3.3**: Pemetaan dampak perubahan kolom SQL ke endpoint API (`src/analyzer/crossImpact.ts`).
   - *Komit*: `feat(analisis): memetakan keterkaitan kolom sql terhadap rute api`
-- [ ] **Tugas 3.4**: Pengujian unit kompatibilitas API (`tests/apiDiff.test.ts`).
+- [x] **Tugas 3.4**: Pengujian unit kompatibilitas API (`tests/apiDiff.test.ts`).
   - *Komit*: `test(api): menambahkan pengujian unit deteksi pemutusan kontrak api`
 
 ### Fase 4: Template Migrasi Aman (Expand-Contract)
