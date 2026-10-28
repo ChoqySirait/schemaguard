@@ -1,14 +1,16 @@
 /**
  * Pemformat Laporan Tabel Terminal (Terminal Reporter)
- * Bertanggung jawab menyajikan hasil analisis skema basis data, kontrak API,
- * dan rekomendasi mitigasi bertahap dalam bentuk tabel dan ringkasan visual
- * yang informatif di konsol terminal pengembang.
+ * Bertanggung jawab menyajikan hasil analisis skema basis data, mode penguncian (lock mode),
+ * breaking changes kontrak API, pemetaan dampak silang (cross-impact), dan skrip mitigasi
+ * Expand-Contract dalam bentuk tabel dan ringkasan visual yang informatif di konsol terminal.
  */
 
 import chalk from 'chalk';
 import {
   ApiIssue,
+  CrossImpactLink,
   DatabaseIssue,
+  LockMode,
   MigrationRecommendation,
   ReportSummary,
   RiskLevel,
@@ -32,6 +34,24 @@ export function formatRiskBadge(level: RiskLevel): string {
 }
 
 /**
+ * Menghasilkan lencana warna untuk mode penguncian basis data (Lock Mode)
+ */
+export function formatLockBadge(mode?: LockMode | string): string {
+  if (!mode || mode === 'NONE') return '';
+  switch (mode) {
+    case 'ACCESS_EXCLUSIVE':
+    case 'EXCLUSIVE':
+      return chalk.bgMagenta.white.bold(` LOCK: ${mode} `);
+    case 'SHARE_ROW_EXCLUSIVE':
+    case 'SHARE':
+    case 'METADATA_LOCK':
+      return chalk.bgBlue.white.bold(` LOCK: ${mode} `);
+    default:
+      return chalk.bgGray.white(` LOCK: ${mode} `);
+  }
+}
+
+/**
  * Membuat garis pemisah horizontal
  */
 function horizontalRule(length: number = 80, char: string = '─'): string {
@@ -41,23 +61,30 @@ function horizontalRule(length: number = 80, char: string = '─'): string {
 /**
  * Format ringkasan evaluasi risiko dalam bentuk kartu metrik
  */
-export function formatSummaryCards(summary: ReportSummary): string {
+export function formatSummaryCards(summary: ReportSummary, crossImpactCount: number = 0): string {
   const lines: string[] = [];
   lines.push(chalk.bold.white('📊 RINGKASAN EVALUASI RISIKO:'));
   lines.push(horizontalRule(80));
 
   const totalStr = chalk.bold(`${summary.totalIssues} isu terdeteksi`);
-  const critStr = chalk.red.bold(`✖ ${summary.critical} Kritis (Breaking)`);
+  const critStr = chalk.red.bold(`✖ ${summary.critical} Kritis`);
   const warnStr = chalk.yellow.bold(`⚠ ${summary.warning} Peringatan`);
   const safeStr = chalk.green.bold(`✔ ${summary.safe} Aman`);
+  const impactStr = chalk.cyan.bold(`🔗 ${crossImpactCount} Dampak Silang`);
 
-  lines.push(`  ${totalStr} │ ${critStr} │ ${warnStr} │ ${safeStr}`);
+  lines.push(`  ${totalStr} │ ${critStr} │ ${warnStr} │ ${safeStr} │ ${impactStr}`);
   lines.push(horizontalRule(80));
 
   if (summary.passed) {
-    lines.push(chalk.bgGreen.black.bold(' STATUS: LOLOS (PASSED) ') + chalk.green(' Tidak ditemukan perubahan merusak berkategori kritis.'));
+    lines.push(
+      chalk.bgGreen.black.bold(' STATUS: LOLOS (PASSED) ') +
+        chalk.green(' Tidak ditemukan perubahan merusak berkategori kritis.')
+    );
   } else {
-    lines.push(chalk.bgRed.white.bold(' STATUS: GAGAL (BLOCKED) ') + chalk.red(' Ditemukan pelanggaran skema berkategori kritis yang memicu breaking changes!'));
+    lines.push(
+      chalk.bgRed.white.bold(' STATUS: GAGAL (BLOCKED) ') +
+        chalk.red(' Ditemukan pelanggaran skema berkategori kritis yang memicu breaking changes/lock!')
+    );
   }
   lines.push('');
 
@@ -65,35 +92,41 @@ export function formatSummaryCards(summary: ReportSummary): string {
 }
 
 /**
- * Format tabel temuan perubahan skema basis data
+ * Format tabel temuan perubahan skema basis data dan lock contention
  */
 export function formatDatabaseIssues(issues: DatabaseIssue[]): string {
   if (issues.length === 0) {
-    return chalk.green('✔ Tidak ditemukan anti-pola skema basis data.\n');
+    return chalk.green('✔ Tidak ditemukan anti-pola skema atau penguncian berbahaya pada SQL.\n');
   }
 
   const lines: string[] = [];
-  lines.push(chalk.bold.cyan('🗄️  PELANGGARAN SKEMA BASIS DATA (SQL):'));
+  lines.push(chalk.bold.cyan('🗄️  AUDIT MIGRASI BASIS DATA & PENGUNCIAN TABEL (SQL):'));
   lines.push(horizontalRule(80));
 
   issues.forEach((issue, index) => {
     const num = chalk.gray(`[${index + 1}]`);
     const badge = formatRiskBadge(issue.riskLevel);
+    const lockBadge = issue.lockMode ? ` ${formatLockBadge(issue.lockMode)}` : '';
+    const dialect = issue.dialect ? chalk.blue(`[${issue.dialect.toUpperCase()}]`) : '';
     const rule = chalk.bold.white(issue.ruleName || issue.ruleId);
-    const target = issue.table ? chalk.yellow(`[Tabel: ${issue.table}${issue.column ? `, Kolom: ${issue.column}` : ''}]`) : '';
-    const loc = issue.file ? chalk.gray(`(${issue.file}${issue.line ? `:${issue.line}` : ''})`) : '';
+    const target = issue.table
+      ? chalk.yellow(`[Tabel: ${issue.table}${issue.column ? `, Kolom: ${issue.column}` : ''}]`)
+      : '';
+    const loc = issue.file
+      ? chalk.gray(`(${issue.file}${issue.line ? `:${issue.line}` : ''})`)
+      : '';
 
-    lines.push(`${num} ${badge} ${rule} ${target} ${loc}`);
+    lines.push(`${num} ${badge}${lockBadge} ${dialect} ${rule} ${target} ${loc}`);
     lines.push(`    ${chalk.white(issue.description)}`);
 
     if (issue.statement) {
       const cleanStmt = issue.statement.trim().replace(/\s+/g, ' ');
       const preview = cleanStmt.length > 90 ? cleanStmt.slice(0, 87) + '...' : cleanStmt;
-      lines.push(`    ${chalk.gray('Kueri:')} ${chalk.italic.cyan(preview)}`);
+      lines.push(`    ${chalk.gray('Kueri DDL:')} ${chalk.italic.cyan(preview)}`);
     }
 
     if (issue.suggestedFix) {
-      lines.push(`    ${chalk.gray('Saran:')} ${chalk.italic.green(issue.suggestedFix)}`);
+      lines.push(`    ${chalk.gray('Saran Mitigasi:')} ${chalk.italic.green(issue.suggestedFix)}`);
     }
 
     lines.push(horizontalRule(80, '┄'));
@@ -128,6 +161,33 @@ export function formatApiIssues(issues: ApiIssue[]): string {
       lines.push(`    ${chalk.gray('Dampak:')} ${chalk.italic.yellow(issue.details)}`);
     }
 
+    lines.push(horizontalRule(80, '┄'));
+  });
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
+ * Format pemetaan dampak silang perubahan skema SQL ke endpoint API
+ */
+export function formatCrossImpacts(crossImpacts: CrossImpactLink[] = []): string {
+  if (crossImpacts.length === 0) {
+    return '';
+  }
+
+  const lines: string[] = [];
+  lines.push(chalk.bold.blue('🔗 PEMETAAN DAMPAK SILANG (CROSS-IMPACT: SQL ➔ API):'));
+  lines.push(horizontalRule(80));
+
+  crossImpacts.forEach((link, index) => {
+    const num = chalk.gray(`[${index + 1}]`);
+    const badge = formatRiskBadge(link.riskLevel);
+    const sqlSrc = chalk.yellow.bold(`${link.sqlTable}.${link.sqlColumn}`);
+    const apiTarget = chalk.magenta.bold(`${link.apiMethod} ${link.apiPath} (${link.propertyName})`);
+
+    lines.push(`${num} ${badge} ${sqlSrc} ➔ ${apiTarget}`);
+    lines.push(`    ${chalk.white(link.impactDescription)}`);
     lines.push(horizontalRule(80, '┄'));
   });
 
@@ -190,6 +250,7 @@ export function formatRecommendations(recs: MigrationRecommendation[]): string {
  */
 export function renderTerminalReport(report: SchemaGuardReport): string {
   const output: string[] = [];
+  const crossImpactCount = report.crossImpacts ? report.crossImpacts.length : 0;
 
   output.push('');
   output.push(chalk.cyan.bold('╔══════════════════════════════════════════════════════════════════════════════╗'));
@@ -198,9 +259,13 @@ export function renderTerminalReport(report: SchemaGuardReport): string {
   output.push(chalk.gray(`Waktu Pemindaian: ${report.timestamp}`));
   output.push('');
 
-  output.push(formatSummaryCards(report.summary));
+  output.push(formatSummaryCards(report.summary, crossImpactCount));
   output.push(formatDatabaseIssues(report.databaseIssues));
   output.push(formatApiIssues(report.apiIssues));
+
+  if (report.crossImpacts && report.crossImpacts.length > 0) {
+    output.push(formatCrossImpacts(report.crossImpacts));
+  }
 
   if (report.recommendations && report.recommendations.length > 0) {
     output.push(formatRecommendations(report.recommendations));
@@ -219,4 +284,3 @@ export function renderTerminalReport(report: SchemaGuardReport): string {
 export function printTerminalReport(report: SchemaGuardReport): void {
   console.log(renderTerminalReport(report));
 }
-
