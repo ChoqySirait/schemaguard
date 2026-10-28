@@ -36,11 +36,11 @@ Aturan Pengerjaan:
   - *Komit*: `test(mitigasi): memvalidasi hasil pembuatan skrip migrasi bertahap`
 
 ### Fase 5: Generator Laporan Web HTML & Antarmuka CLI
-- [ ] **Tugas 5.1**: Template generator dasbor HTML statis mandiri (`src/reporter/htmlReport.ts`).
+- [x] **Tugas 5.1**: Template generator dasbor HTML statis mandiri (`src/reporter/htmlReport.ts`).
   - *Komit*: `feat(pelaporan): membangun generator laporan web visual statis`
-- [ ] **Tugas 5.2**: Pemformat ringkasan terminal dan Markdown PR (`src/reporter/terminal.ts`).
+- [x] **Tugas 5.2**: Pemformat ringkasan terminal dan Markdown PR (`src/reporter/terminal.ts`).
   - *Komit*: `feat(pelaporan): menambahkan format keluaran tabel konsol terminal`
-- [ ] **Tugas 5.3**: Penggabungan perintah CLI dan opsi eksekusi (`src/index.ts`).
+- [x] **Tugas 5.3**: Penggabungan perintah CLI dan opsi eksekusi (`src/index.ts`).
   - *Komit*: `feat(cli): menghubungkan seluruh alur audit ke antarmuka cli`
-- [ ] **Tugas 5.4**: Dokumentasi lengkap README berbasis studi kasus industri (`README.md`).
+- [x] **Tugas 5.4**: Dokumentasi lengkap README berbasis studi kasus industri (`README.md`).
   - *Komit*: `docs(readme): merilis dokumentasi berbasis referensi teknis industri`
