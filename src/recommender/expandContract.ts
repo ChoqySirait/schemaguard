@@ -222,16 +222,13 @@ export function createAlterColumnTypeRecommendation(ctx: ColumnContext): Migrati
 
   const expandPhase: MigrationPhase = {
     phase: 1,
-    title: 'Fase Perluas (Expand): Tambah Kolom Baru dan Sinkronisasi Data Ganda',
-    description: `Tambahkan kolom '${shadowCol}' dengan tipe '${newType}', lakukan backfill data historis, dan aktifkan dual-write.`,
+    title: 'Fase Perluas (Expand): Tambah Kolom Baru, Pasang Pemicu Sinkronisasi, dan Backfill Bertahap',
+    description: `Tambahkan kolom '${shadowCol}' dengan tipe '${newType}', aktifkan pemicu sinkronisasi ganda (dual-writing) terlebih dahulu untuk menangkap transaksi baru, lalu lakukan backfill data historis dalam batch kecil.`,
     script: [
-      `-- Langkah 1: Tambahkan kolom baru dengan tipe target`,
+      `-- Langkah 1: Tambahkan kolom bayangan baru dengan tipe target`,
       `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${shadowCol} ${newType};`,
       ``,
-      `-- Langkah 2: Backfill data bertahap dari kolom lama ke kolom baru`,
-      `UPDATE ${table} SET ${shadowCol} = CAST(${column} AS ${newType}) WHERE ${shadowCol} IS NULL;`,
-      ``,
-      `-- Langkah 3 (Opsi Database Trigger): Sinkronkan penulisan data baru secara otomatis`,
+      `-- Langkah 2: Pasang pemicu sinkronisasi ganda (dual-writing) TERLEBIH DAHULU untuk menangkap transaksi data baru`,
       `CREATE OR REPLACE FUNCTION sync_${table}_${column}() RETURNS TRIGGER AS $$`,
       `BEGIN`,
       `  NEW.${shadowCol} := CAST(NEW.${column} AS ${newType});`,
@@ -241,7 +238,18 @@ export function createAlterColumnTypeRecommendation(ctx: ColumnContext): Migrati
       ``,
       `CREATE OR REPLACE TRIGGER trg_sync_${table}_${column}`,
       `BEFORE INSERT OR UPDATE ON ${table}`,
-      `FOR EACH ROW EXECUTE FUNCTION sync_${table}_${column}();`
+      `FOR EACH ROW EXECUTE FUNCTION sync_${table}_${column}();`,
+      ``,
+      `-- Langkah 3: Backfill data historis lama secara bertahap (1.000-5.000 baris per batch berpaginasi untuk mencegah lock)`,
+      `-- Jalankan kueri batch berikut berulang hingga 0 baris terpengaruh:`,
+      `UPDATE ${table}`,
+      `SET ${shadowCol} = CAST(${column} AS ${newType})`,
+      `WHERE id IN (`,
+      `  SELECT id FROM ${table}`,
+      `  WHERE ${shadowCol} IS NULL`,
+      `  ORDER BY id`,
+      `  LIMIT 5000`,
+      `);`
     ].join('\n')
   };
 
@@ -289,16 +297,13 @@ export function createRenameColumnRecommendation(ctx: ColumnContext): MigrationR
 
   const expandPhase: MigrationPhase = {
     phase: 1,
-    title: 'Fase Perluas (Expand): Tambah Kolom Baru dan Salin Data',
-    description: `Tambahkan kolom '${newCol}' berdampingan dengan '${oldCol}' untuk menjaga kompatibilitas aplikasi lama dan baru.`,
+    title: 'Fase Perluas (Expand): Tambah Kolom Baru, Pasang Pemicu Sinkronisasi, dan Backfill Data',
+    description: `Tambahkan kolom '${newCol}' berdampingan dengan '${oldCol}', pasang sinkronisasi dua arah terlebih dahulu, lalu salin data historis dalam batch kecil.`,
     script: [
       `-- Langkah 1: Tambahkan kolom baru dengan nama target`,
       `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${newCol} ${dataType};`,
       ``,
-      `-- Langkah 2: Salin data dari kolom lama`,
-      `UPDATE ${table} SET ${newCol} = ${oldCol} WHERE ${newCol} IS NULL;`,
-      ``,
-      `-- Langkah 3: Buat sinkronisasi dua arah via trigger atau dual-write di kode aplikasi`,
+      `-- Langkah 2: Pasang pemicu sinkronisasi dua arah TERLEBIH DAHULU untuk menangkap pembaruan konkuren`,
       `CREATE OR REPLACE FUNCTION sync_rename_${table}_${oldCol}() RETURNS TRIGGER AS $$`,
       `BEGIN`,
       `  NEW.${newCol} := COALESCE(NEW.${newCol}, NEW.${oldCol});`,
@@ -309,7 +314,18 @@ export function createRenameColumnRecommendation(ctx: ColumnContext): MigrationR
       ``,
       `CREATE OR REPLACE TRIGGER trg_rename_${table}_${oldCol}`,
       `BEFORE INSERT OR UPDATE ON ${table}`,
-      `FOR EACH ROW EXECUTE FUNCTION sync_rename_${table}_${oldCol}();`
+      `FOR EACH ROW EXECUTE FUNCTION sync_rename_${table}_${oldCol}();`,
+      ``,
+      `-- Langkah 3: Salin data historis lama secara bertahap dalam batch kecil (1.000-5.000 baris)`,
+      `-- Jalankan kueri batch berikut berulang hingga 0 baris terpengaruh:`,
+      `UPDATE ${table}`,
+      `SET ${newCol} = ${oldCol}`,
+      `WHERE id IN (`,
+      `  SELECT id FROM ${table}`,
+      `  WHERE ${newCol} IS NULL`,
+      `  ORDER BY id`,
+      `  LIMIT 5000`,
+      `);`
     ].join('\n')
   };
 
@@ -488,13 +504,20 @@ export function createAddColumnWithDefaultRecommendation(
   const expandPhase: MigrationPhase = {
     phase: 1,
     title: 'Fase Perluas (Expand): Tambah Kolom sebagai Nullable dan Backfill Bertahap',
-    description: `Tambahkan kolom '${column}' sebagai NULLABLE terlebih dahulu tanpa volatile DEFAULT untuk menghindari table rewrite dan AccessExclusiveLock panjang.`,
+    description: `Tambahkan kolom '${column}' sebagai NULLABLE terlebih dahulu tanpa volatile DEFAULT untuk menghindari table rewrite dan AccessExclusiveLock panjang, lalu lakukan backfill bertahap dalam batch kecil.`,
     script: [
       `-- Langkah 1: Tambahkan kolom baru tanpa volatile default`,
       `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${dataType} NULL;`,
       ``,
-      `-- Langkah 2: Backfill data dalam batch kecil di luar jam sibuk`,
-      `UPDATE ${table} SET ${column} = now() WHERE ${column} IS NULL;`
+      `-- Langkah 2: Backfill data historis dalam batch kecil (1.000-5.000 baris) di luar jam sibuk`,
+      `-- Jalankan kueri batch berikut berulang hingga 0 baris terpengaruh:`,
+      `UPDATE ${table} SET ${column} = now()`,
+      `WHERE id IN (`,
+      `  SELECT id FROM ${table}`,
+      `  WHERE ${column} IS NULL`,
+      `  ORDER BY id`,
+      `  LIMIT 5000`,
+      `);`
     ].join('\n')
   };
 
