@@ -693,13 +693,10 @@ export function generateHtmlReport(report: SchemaGuardReport): string {
  * Menyimpan laporan HTML statis ke berkas tujuan
  */
 export function saveHtmlReport(report: SchemaGuardReport, outputPath: string): void {
-  const absolutePath = path.resolve(outputPath);
-  const dir = path.dirname(absolutePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  const resolvedPath = path.resolve(outputPath);
+  fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
 
   const htmlContent = generateHtmlReport(report);
-  fs.writeFileSync(absolutePath, htmlContent, 'utf-8');
+  fs.writeFileSync(resolvedPath, htmlContent, 'utf-8');
 }
 

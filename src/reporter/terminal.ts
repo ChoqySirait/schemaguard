@@ -5,6 +5,7 @@
  * dan hierarkis tanpa membanjiri konsol dengan baris kode SQL mentah yang panjang.
  */
 
+import * as path from 'path';
 import chalk from 'chalk';
 import {
   ApiIssue,
@@ -274,7 +275,10 @@ export function formatRecommendations(recs: MigrationRecommendation[]): string {
 /**
  * Mengonstruksi laporan teks lengkap untuk konsol terminal dengan hierarki pohon yang ergonomis
  */
-export function renderTerminalReport(report: SchemaGuardReport): string {
+export function renderTerminalReport(
+  report: SchemaGuardReport,
+  reportPath: string = './schemaguard-report.html'
+): string {
   const output: string[] = [];
   const crossImpacts = report.crossImpacts || [];
   const crossImpactCount = crossImpacts.length;
@@ -293,10 +297,14 @@ export function renderTerminalReport(report: SchemaGuardReport): string {
     output.push(formatCompactRecommendations(report.recommendations));
   }
 
+  // Format tautan file absolut yang dikenali oleh terminal VS Code (Ctrl + Klik)
+  const resolvedPath = path.resolve(reportPath);
+  const formattedLink = `file:///${resolvedPath.replace(/\\/g, '/')}`;
+
   // Footer & Tautan file URL
   output.push(horizontalRule(80, '─'));
   output.push(
-    `📄 Buka laporan lengkap & skrip SQL mandiri : ${chalk.underline.blue('file://./schemaguard-report.html')}`
+    `📄 Buka laporan lengkap & skrip SQL mandiri : ${chalk.underline.blue(formattedLink)}`
   );
   output.push(
     `💡 Lewati aturan jika terbukti aman         : ${chalk.gray('schemaguard check --ignore-rule <id>')}`
@@ -310,6 +318,6 @@ export function renderTerminalReport(report: SchemaGuardReport): string {
 /**
  * Mencetak laporan langsung ke stdout terminal
  */
-export function printTerminalReport(report: SchemaGuardReport): void {
-  console.log(renderTerminalReport(report));
+export function printTerminalReport(report: SchemaGuardReport, reportPath?: string): void {
+  console.log(renderTerminalReport(report, reportPath));
 }

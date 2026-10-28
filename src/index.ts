@@ -127,7 +127,7 @@ function handleReportOutput(
     }
   } else {
     // console default
-    printTerminalReport(report);
+    printTerminalReport(report, options.htmlReport);
     if (options.output) {
       saveMarkdownReport(report, options.output);
       console.log(chalk.green(`Salinan Markdown disimpan ke: ${options.output}`));

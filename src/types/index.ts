@@ -167,6 +167,7 @@ export interface BaseCliOptions {
   format?: 'console' | 'json' | 'html' | 'markdown' | string;
   output?: string;
   failOn?: 'CRITICAL' | 'WARNING' | RiskLevel | string;
+  htmlReport?: string;
 }
 
 /**

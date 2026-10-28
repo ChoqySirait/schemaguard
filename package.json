@@ -11,7 +11,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "demo": "npx ts-node src/index.ts check --migrations ./examples --api ./examples/openapi.yaml"
+    "demo": "npx ts-node src/index.ts check --migrations ./examples --api ./examples/openapi.yaml --html-report ./schemaguard-report.html"
   },
   "keywords": [
     "schema",
