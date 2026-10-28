@@ -1,0 +1,44 @@
+openapi: 3.0.0
+info:
+  title: User & Order Service API
+  version: 1.0.0
+  description: Spesifikasi kontrak OpenAPI untuk pengujian demo SchemaGuard
+paths:
+  /api/users:
+    get:
+      summary: Mendapatkan profil pengguna
+      responses:
+        '200':
+          description: Berhasil mengambil data profil pengguna
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  username:
+                    type: string
+                  age:
+                    type: integer
+                  avatar_url:
+                    type: string
+  /api/orders:
+    get:
+      summary: Daftar pesanan
+      responses:
+        '200':
+          description: Berhasil mengambil daftar pesanan
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    total_price:
+                      type: number
+                    status:
+                      type: string
