@@ -1,0 +1,35 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Build & Test (Node.js ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [ 18, 20 ]
+
+    steps:
+      - name: Checkout Repositori
+        uses: actions/checkout@v4
+
+      - name: Pasang Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Pasang Dependensi Bersih
+        run: npm ci
+
+      - name: Validasi Kompilasi TypeScript
+        run: npx tsc --noEmit
+
+      - name: Eksekusi Pengujian Unit
+        run: npm test
