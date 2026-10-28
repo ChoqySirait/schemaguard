@@ -702,3 +702,4 @@ export function saveHtmlReport(report: SchemaGuardReport, outputPath: string): v
   const htmlContent = generateHtmlReport(report);
   fs.writeFileSync(absolutePath, htmlContent, 'utf-8');
 }
+
