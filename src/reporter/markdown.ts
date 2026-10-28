@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   ApiIssue,
+  CrossImpactLink,
   DatabaseIssue,
   MigrationRecommendation,
   ReportSummary,
@@ -34,7 +35,7 @@ export function getMarkdownBadge(level: RiskLevel): string {
 /**
  * Format tabel ringkasan evaluasi dalam Markdown
  */
-export function formatMarkdownSummary(summary: ReportSummary): string {
+export function formatMarkdownSummary(summary: ReportSummary, crossImpactCount: number = 0): string {
   const lines: string[] = [];
 
   const statusBadge = summary.passed
@@ -46,18 +47,25 @@ export function formatMarkdownSummary(summary: ReportSummary): string {
   lines.push('| Metrik Evaluasi | Nilai | Catatan |');
   lines.push('| :--- | :---: | :--- |');
   lines.push(`| **Total Isu** | **${summary.totalIssues}** | Seluruh temuan skema dan API |`);
-  lines.push(`| 🔴 **Risiko Kritis (Breaking)** | **${summary.critical}** | Operasi yang menggagalkan aplikasi aktif |`);
+  lines.push(`| 🔴 **Risiko Kritis (Breaking)** | **${summary.critical}** | Operasi yang menggagalkan aplikasi aktif atau lock eksklusif |`);
   lines.push(`| 🟡 **Peringatan (Warning)** | **${summary.warning}** | Potensi penguncian tabel / latensi tinggi |`);
   lines.push(`| 🟢 **Aman (Safe)** | **${summary.safe}** | Perubahan kompatibel ke belakang |`);
+  if (crossImpactCount > 0) {
+    lines.push(`| 🔗 **Dampak Silang (Cross-Impact)** | **${crossImpactCount}** | Modifikasi kolom SQL yang memutus properti API |`);
+  }
   lines.push('');
 
   if (!summary.passed) {
     lines.push('> [!CAUTION]');
-    lines.push('> **Peringatan Penggabungan Kode:** Pull Request ini mengandung perubahan berbahaya (*breaking changes*) yang dapat menyebabkan kegagalan sistem atau waktu henti (*downtime*) di lingkungan produksi jika diterapkan secara langsung.');
+    lines.push(
+      '> **Peringatan Penggabungan Kode:** Pull Request ini mengandung perubahan berbahaya (*breaking changes* / *exclusive lock*) yang dapat menyebabkan kegagalan sistem atau waktu henti (*downtime*) di lingkungan produksi jika diterapkan secara langsung.'
+    );
     lines.push('');
   } else {
     lines.push('> [!NOTE]');
-    lines.push('> Tidak ada perubahan skema atau kontrak API berkategori kritis. Penerapan aman dilakukan dengan prosedur standar.');
+    lines.push(
+      '> Tidak ada perubahan skema atau kontrak API berkategori kritis. Penerapan aman dilakukan dengan prosedur standar.'
+    );
     lines.push('');
   }
 
@@ -76,17 +84,20 @@ export function formatMarkdownDatabaseIssues(issues: DatabaseIssue[]): string {
   lines.push('<details open>');
   lines.push(`<summary><b>🗄️ Daftar Pelanggaran Skema Basis Data (${issues.length})</b></summary>`);
   lines.push('');
-  lines.push('| Tingkat | Aturan | Target | Kueri SQL | Berkas |');
-  lines.push('| :---: | :--- | :--- | :--- | :--- |');
+  lines.push('| Tingkat | Aturan | Mode Kunci | Target | Kueri SQL | Berkas |');
+  lines.push('| :---: | :--- | :---: | :--- | :--- | :--- |');
 
   issues.forEach((issue) => {
     const badge = getMarkdownBadge(issue.riskLevel);
+    const lockBadge = issue.lockMode ? `\`${issue.lockMode}\`` : '-';
     const rule = `**${issue.ruleName || issue.ruleId}**<br>_${issue.description}_`;
     const target = issue.table ? `\`${issue.table}${issue.column ? `.${issue.column}` : ''}\`` : '-';
-    const stmt = issue.statement ? `\`${issue.statement.trim().replace(/\s+/g, ' ').slice(0, 70)}...\`` : '-';
+    const stmt = issue.statement
+      ? `\`${issue.statement.trim().replace(/\s+/g, ' ').slice(0, 70)}...\``
+      : '-';
     const loc = issue.file ? `\`${issue.file}${issue.line ? `:${issue.line}` : ''}\`` : '-';
 
-    lines.push(`| ${badge} | ${rule} | ${target} | ${stmt} | ${loc} |`);
+    lines.push(`| ${badge} | ${rule} | ${lockBadge} | ${target} | ${stmt} | ${loc} |`);
   });
 
   lines.push('');
@@ -127,6 +138,36 @@ export function formatMarkdownApiIssues(issues: ApiIssue[]): string {
 }
 
 /**
+ * Format pemetaan dampak silang SQL ke API dalam Markdown
+ */
+export function formatMarkdownCrossImpacts(crossImpacts: CrossImpactLink[] = []): string {
+  if (crossImpacts.length === 0) {
+    return '';
+  }
+
+  const lines: string[] = [];
+  lines.push('<details open>');
+  lines.push(`<summary><b>🔗 Pemetaan Dampak Silang (SQL ➔ API: ${crossImpacts.length})</b></summary>`);
+  lines.push('');
+  lines.push('| Kolom SQL | | Rute & Properti API | Potensi Dampak | Tingkat |');
+  lines.push('| :--- | :---: | :--- | :--- | :---: |');
+
+  crossImpacts.forEach((link) => {
+    const badge = getMarkdownBadge(link.riskLevel);
+    const sqlCol = `\`${link.sqlTable}.${link.sqlColumn}\``;
+    const apiRoute = `\`${link.apiMethod} ${link.apiPath}\` (\`${link.propertyName}\`)`;
+
+    lines.push(`| ${sqlCol} | ➔ | ${apiRoute} | ${link.impactDescription} | ${badge} |`);
+  });
+
+  lines.push('');
+  lines.push('</details>');
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
  * Format bagian rekomendasi pola Expand & Contract
  */
 export function formatMarkdownRecommendations(recs: MigrationRecommendation[]): string {
@@ -143,7 +184,9 @@ export function formatMarkdownRecommendations(recs: MigrationRecommendation[]): 
 
   recs.forEach((rec, idx) => {
     lines.push(`<details open>`);
-    lines.push(`<summary><b>Rekomendasi ${idx + 1}: ${rec.title}</b> (Target: <code>${rec.target}</code>)</summary>`);
+    lines.push(
+      `<summary><b>Rekomendasi ${idx + 1}: ${rec.title}</b> (Target: <code>${rec.target}</code>)</summary>`
+    );
     lines.push('');
     lines.push(`${rec.description}`);
     lines.push('');
@@ -187,24 +230,31 @@ export function formatMarkdownRecommendations(recs: MigrationRecommendation[]): 
  */
 export function renderMarkdownReport(report: SchemaGuardReport): string {
   const parts: string[] = [];
+  const crossImpactCount = report.crossImpacts ? report.crossImpacts.length : 0;
 
   parts.push('## 🛡️ SchemaGuard Quality Gate Report');
   parts.push(`*Dipindai secara otomatis pada: \`${report.timestamp}\`*`);
   parts.push('');
 
-  parts.push(formatMarkdownSummary(report.summary));
+  parts.push(formatMarkdownSummary(report.summary, crossImpactCount));
   parts.push('---');
   parts.push('### 📋 Rincian Temuan Evaluasi');
   parts.push('');
   parts.push(formatMarkdownDatabaseIssues(report.databaseIssues));
   parts.push(formatMarkdownApiIssues(report.apiIssues));
 
+  if (report.crossImpacts && report.crossImpacts.length > 0) {
+    parts.push(formatMarkdownCrossImpacts(report.crossImpacts));
+  }
+
   if (report.recommendations && report.recommendations.length > 0) {
     parts.push(formatMarkdownRecommendations(report.recommendations));
   }
 
   parts.push('---');
-  parts.push('*Laporan ini dibuat otomatis oleh [SchemaGuard](https://github.com/ChoqySirait/schemaguard) GitHub Action.*');
+  parts.push(
+    '*Laporan ini dibuat otomatis oleh [SchemaGuard](https://github.com/ChoqySirait/schemaguard) GitHub Action.*'
+  );
 
   return parts.join('\n');
 }
@@ -223,4 +273,3 @@ export function saveMarkdownReport(report: SchemaGuardReport, outputPath: string
 
   fs.writeFileSync(resolvedPath, markdownContent, 'utf-8');
 }
-
