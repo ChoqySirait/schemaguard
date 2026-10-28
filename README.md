@@ -1,121 +1,100 @@
 # 🛡️ SchemaGuard
 
-> **Perkakas Audit Statis Migrasi Basis Data (DDL Lock Contention) dan Kompatibilitas Kontrak API (OpenAPI) dengan Rekomendasi Pola Expand-Contract.**
+> **Perkakas Evaluasi Statis Migrasi DDL (Lock Contention) dan Kompatibilitas Kontrak API (OpenAPI) dengan Rekomendasi Pola Expand-Contract.**
 
-[![CI Pipeline](https://github.com/ChoqySirait/schemaguard/actions/workflows/ci.yml/badge.svg)](https://github.com/ChoqySirait/schemaguard/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.4+-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-18%20%7C%2020-green.svg)](https://nodejs.org/)
-[![Tests: Vitest](https://img.shields.io/badge/Vitest-56%20Passed-brightgreen.svg)](#-pengujian-unit)
+[![CI Quality Gate](https://github.com/ChoqySirait/schemaguard/actions/workflows/ci.yml/badge.svg)](https://github.com/ChoqySirait/schemaguard/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Mode-blue.svg)](https://www.typescriptlang.org/)
+[![Tests Coverage](https://img.shields.io/badge/Tests-56%20Passed-success.svg)](https://vitest.dev/)
 
 ---
 
 ## 📌 Latar Belakang Masalah Industri
 
-Di lingkungan teknologi berskala tinggi (*high-traffic engineering*), perubahan skema basis data dan kontrak API sering kali lolos dari peninjauan kode manual (*code review*), memicu dua insiden pemadaman kritis (*cascading outage*):
+Pada ekosistem rekayasa perangkat lunak berskala tinggi (*high-traffic systems*), pembaruan skema basis data dan kontrak API yang berjalan pada *Pull Request* sering kali lolos dari peninjauan kode manual (*code review*). Kelalaian ini menjadi penyebab utama dua insiden kritis di lingkungan produksi (*cascading outage*):
 
-1. **Downtime Akibat Kunci Tabel Eksklusif (*DDL Lock Contention*)**:
-   - Pernyataan DDL seperti `ALTER COLUMN TYPE`, `DROP COLUMN`, `RENAME TABLE`, atau `ADD NOT NULL` tanpa nilai bawaan mengakuisisi **`AccessExclusiveLock`** di PostgreSQL atau **`Metadata Lock (MDL)`** di MySQL.
-   - Mode penguncian ini memblokir seluruh kueri baca dan tulis (`SELECT`, `INSERT`, `UPDATE`, `DELETE`). Akibatnya, transaksi antrean menumpuk, kolam koneksi (*connection pool*) jenuh dalam hitungan detik, dan layanan mengalami kehabisan batas waktu (*timeout*).
+1. **Downtime Akibat Penguncian Eksklusif Tabel (*DDL Lock Contention*):**
+   - Pernyataan DDL sederhana seperti `ALTER TABLE ... ALTER COLUMN TYPE`, `DROP COLUMN`, atau `ADD COLUMN ... NOT NULL` tanpa nilai bawaan mengakuisisi `AccessExclusiveLock` di PostgreSQL atau *Metadata Lock* (MDL) di MySQL.
+   - Mode penguncian ini memblokir seluruh operasi baca (`SELECT`) dan tulis (`INSERT`, `UPDATE`, `DELETE`). Kueri baru tertahan dalam antrean, menghabiskan kolam koneksi (*connection pool*) dalam hitungan detik, dan melumpuhkan peladen aplikasi.
    - *Referensi*: [PostgreSQL Explicit Locking Documentation](https://www.postgresql.org/docs/current/explicit-locking.html).
 
-2. **Pemutusan Kontrak API Diam-Diam (*Silent Breaking API Changes*)**:
-   - Menghapus kolom atau mengubah tipe data kolom SQL secara langsung merusak serialisasi JSON pada endpoint OpenAPI yang dikonsumsi oleh aplikasi web, seluler, atau mitra integrasi pihak ketiga.
-   - Solusi industri standar untuk menghindari pemadaman ini adalah menerapkan **Pola Expand & Contract** (*Parallel Change*).
-   - *Referensi*: [Martin Fowler — Parallel Change (Expand and Contract Pattern)](https://martinfowler.com/bliki/ParallelChange.html) & [Stripe Engineering — Online Migrations at Scale](https://stripe.com/blog/online-migrations).
+2. **Pemutusan Kontrak API Diam-Diam (*Silent Breaking API Changes*):**
+   - Modifikasi kolom basis data sering kali dilakukan tanpa menyadari bahwa properti tersebut terhubung langsung ke serialisasi JSON pada spesifikasi OpenAPI yang dikonsumsi oleh aplikasi web, seluler, atau layanan pihak ketiga.
+   - *Solusi Standar Industri*: Menghindari *downtime* dengan menerapkan pola migrasi bertahap **Expand & Contract** (*Parallel Change*).
+   - *Referensi*: [Martin Fowler — Parallel Change Pattern](https://martinfowler.com/bliki/ParallelChange.html) & [Stripe Engineering — Online Migrations at Scale](https://stripe.com/blog/online-migrations).
 
-**SchemaGuard** hadir sebagai penjaga gerbang kualitas deterministik untuk mengidentifikasi anomali penguncian, memetakan keterkaitan dampak (*Cross-Impact Mapping*), dan menyusun draf strategi mitigasi transisi aman sebelum kode digabungkan ke cabang produksi.
+SchemaGuard bertindak sebagai gerbang kualitas (*quality gate*) deterministik di *pipeline* CI/CD untuk mendeteksi potensi *lock contention*, memetakan dampak silang ke rute API, dan menyintesis skrip mitigasi sebelum kode digabungkan ke cabang utama.
 
 ---
 
 ## 🏗️ Alur Kerja Sistem (Workflow Architecture)
 
-```mermaid
-flowchart TD
-    A["Developer / Pull Request Trigger"] --> B["schemaguard check --migrations ./migrations --api ./openapi.yaml"]
-
-    subgraph Auditor ["Mesin Audit Determinisme"]
-        B --> C["SQL Lock Contention Auditor"]
-        B --> D["OpenAPI Contract Diff Engine"]
-
-        C --> E{"Deteksi DDL Berbahaya?"}
-        D --> F{"Deteksi Breaking API?"}
-
-        E -- "Ada (AccessExclusiveLock / ShareLock)" --> G["Cross-Impact Mapper (SQL ➔ API)"]
-        F -- "Ada (Endpoint Dihapus / Properti Berubah)" --> G
-
-        G --> H["Expand-Contract Migration Generator"]
-    end
-
-    subgraph Output ["Keluaran Multi-Format"]
-        H --> I["Laporan Terminal (Format Pohon Bersarang)"]
-        H --> J["Dasbor HTML Statis Mandiri (schemaguard-report.html)"]
-        H --> K["Komentar Ringkasan Markdown di GitHub PR"]
-
-        E -- "Ada Isu Kritis" --> L["❌ Exit Code 1 (Blokir Merge)"]
-        E -- "Aman (SAFE)" --> M["✅ Exit Code 0 (Izinkan Merge)"]
-    end
+```text
+[ Berkas Migrasi DDL ] ──┐
+                         ├─► [ SQL DDL Parser ] ──► [ Lock Matrix ] ──┐
+[ Spesifikasi OpenAPI ] ─┘            │                               │
+                                      ▼                               ▼
+                           [ OpenAPI Diff Engine ] ────► [ Cross-Impact Mapper ]
+                                                                      │
+                         ┌────────────────────────────────────────────┴────────────────────────────────────────────┐
+                         ▼                                                         ▼                               ▼
+              [ Console Tree Reporter ]                               [ Standalone HTML Report ]              [ Expand-Contract Generator ]
+             (Ringkasan Cepat Terminal)                                (schemaguard-report.html)                 (Skrip Migrasi Aman)
 ```
 
 ---
 
 ## ✨ Fitur Utama
 
-1. **Audit Migrasi SQL & Deteksi Kunci Tabel**:
-   - Parser deterministik yang sadar terhadap batas string literal dan komentar SQL (`--`, `/* ... */`).
-   - Mendeteksi dialek PostgreSQL & MySQL dengan klasifikasi mode penguncian:
-     - `ACCESS_EXCLUSIVE` (memblokir baca/tulis penuh).
-     - `SHARE_ROW_EXCLUSIVE` & `SHARE` (memblokir penulisan konkuren).
-     - `METADATA_LOCK` (penguncian tabel pada MySQL).
+- **Audit Migrasi SQL & Deteksi Penguncian:**
+  - Parser deterministik yang kebal terhadap batas string literal dan komentar SQL (`--`, `/* ... */`).
+  - Klasifikasi mode kunci PostgreSQL & MySQL: `ACCESS_EXCLUSIVE` (blokir penuh), `SHARE_ROW_EXCLUSIVE` / `SHARE` (blokir penulisan konkuren), dan `METADATA_LOCK`.
 
-2. **Validasi Kompatibilitas OpenAPI**:
-   - Mendukung spesifikasi OpenAPI 3.x dan Swagger 2.0 (format JSON/YAML).
-   - Mendukung resolusi skema komponen lokal (`$ref: '#/components/schemas/...'`) dan skema item dalam array.
-   - Mendeteksi rute/metode yang dihapus, penambahan parameter wajib baru, penghapusan kode status 2xx, dan perubahan tipe properti respons.
+- **Validasi Kompatibilitas OpenAPI:**
+  - Mendukung spesifikasi OpenAPI 3.x dan Swagger 2.0 (format JSON/YAML).
+  - Resolusi skema `$ref` lokal (`#/components/schemas/...`) hingga pemetaan properti bersarang dalam larik (*array*).
+  - Mendeteksi rute/metode yang dihapus, penambahan parameter wajib baru, dan perubahan tipe properti respons.
 
-3. **Pelacakan Dampak Silang (*Cross-Impact Mapping*)**:
-   - Memetakan korelasi langsung antara modifikasi kolom SQL (`DROP_COLUMN`, `ALTER_COLUMN_TYPE`, `RENAME_COLUMN`) dengan properti respons API.
-   - Mendukung normalisasi penamaan (`snake_case` di basis data ke `camelCase` di kontrak JSON API).
+- **Pelacakan Dampak Silang (Cross-Impact Mapping):**
+  - Mengorelasikan modifikasi kolom basis data terhadap endpoint API yang mengekspos data tersebut.
+  - Normalisasi otomatis penamaan lintas batas (konversi `snake_case` di basis data ke `camelCase` di kontrak API).
 
-4. **Generator Mitigasi Zero-Downtime (Expand & Contract)**:
-   - Menyusun skrip SQL dua fase:
-     - **Fase 1 (Expand)**: Kolom bayangan (*shadow column*), pemasangan pemicu sinkronisasi (*dual-writing trigger*), batch backfill bertahap (1.000–5.000 baris berpaginasi), atau penambahan batasan dengan klausul `NOT VALID`.
-     - **Fase 2 (Contract)**: Pengalihan kueri baca, pembersihan pemicu dan kolom lama, serta validasi constraint terpisah.
+- **Generator Mitigasi Zero-Downtime (Expand & Contract):**
+  - **Fase Expand:** Penambahan kolom bayangan (*shadow column*), registrasi pemicu sinkronisasi ganda (*dual-writing trigger*), dan panduan *batch backfill* berpaginasi (1.000–5.000 baris/iterasi).
+  - **Fase Contract:** Skrip pengalihan kueri baca, pembersihan pemicu, dan pelepasan kolom usang secara aman.
 
-5. **Laporan Visual HTML Mandiri (*Offline-Ready*)**:
-   - Menghasilkan berkas dasbor visual `schemaguard-report.html` (dark-mode, responsif, tanpa dependensi server atau CDN luar).
+- **Laporan Visual HTML Mandiri (Offline-Ready):**
+  - Menghasilkan berkas dasbor visual `schemaguard-report.html` (antarmuka *dark mode*, responsif, tanpa dependensi peladen atau CDN eksternal).
 
 ---
 
 ## ⚡ Panduan Cepat (Quickstart)
 
-### 1. Instalasi
+### 1. Instalasi dan Kompilasi
+
 ```bash
-# Clone repositori
 git clone https://github.com/ChoqySirait/schemaguard.git
 cd schemaguard
-
-# Pasang dependensi dan kompilasi
 npm install
 npm run build
 ```
 
-### 2. Jalankan Demonstrasi Satu Perintah
-SchemaGuard telah dilengkapi dengan berkas sampel nyata di direktori `examples/`:
+### 2. Jalankan Demonstrasi Satu Langkah
+
+Gunakan berkas sampel uji yang tersedia pada repositori:
+
 ```bash
 npm run demo
 ```
 
-Perintah di atas akan memindai migrasi SQL pada `examples/` dan kontrak `examples/openapi.yaml`, mencetak ringkasan pohon di konsol terminal, dan menghasilkan berkas laporan visual HTML mandiri `schemaguard-report.html`.
+Perintah di atas memindai berkas migrasi SQL dan kontrak OpenAPI di folder `examples/`, mencetak hierarki temuan di konsol, serta menghasilkan laporan statis `schemaguard-report.html`.
 
 ---
 
 ## 💻 Penggunaan Baris Perintah (CLI)
 
-SchemaGuard menyediakan antarmuka CLI yang intuitif dan kaya opsi:
-
 ```bash
-# Audit migrasi DDL dan kontrak OpenAPI sekaligus
 schemaguard check \
   --migrations ./migrations \
   --api ./openapi.yaml \
@@ -123,54 +102,48 @@ schemaguard check \
   --fail-on CRITICAL
 ```
 
-### Opsi Argumen Baris Perintah:
-| Opsi | Deskripsi | Default |
+### Opsi Parameter
+
+| Opsi | Deskripsi | Nilai Bawaan |
 | :--- | :--- | :---: |
 | `-m, --migrations <path>` | Jalur direktori atau berkas migrasi SQL | - |
 | `-a, --api <path>` | Jalur berkas spesifikasi OpenAPI (YAML/JSON) | - |
-| `--api-base <path>` | Berkas OpenAPI referensi cabang utama (lama) | - |
-| `--api-head <path>` | Berkas OpenAPI cabang kerja (baru) | - |
-| `--db-base <path>` | Berkas skema SQL cabang utama (base) | - |
-| `--db-head <path>` | Berkas skema SQL cabang kerja (head) | - |
-| `--html-report <path>` | Simpan laporan visual HTML mandiri (*offline-ready*) | - |
-| `--format <type>` | Format keluaran terminal (`console`, `json`, `html`, `markdown`) | `console` |
-| `-o, --output <path>` | Jalur penyimpanan berkas keluaran laporan | - |
-| `--fail-on <level>` | Ambang batas kegagalan exit code (`CRITICAL` atau `WARNING`) | `CRITICAL` |
+| `--api-base <path>` | Berkas OpenAPI pembanding cabang utama (*base*) | - |
+| `--api-head <path>` | Berkas OpenAPI cabang fitur (*head*) | - |
+| `--html-report <path>` | Lokasi penyimpanan laporan visual HTML mandiri | `./schemaguard-report.html` |
+| `--fail-on <level>` | Batas toleransi kegagalan exit code (`CRITICAL` / `WARNING`) | `CRITICAL` |
+| `--ignore-rule <id>` | Mengabaikan kode aturan tertentu yang disetujui tim | - |
 
 ---
 
-## 🖥️ Contoh Tampilan Keluaran Terminal
-
-SchemaGuard menyajikan ringkasan konsol menggunakan struktur pohon bersarang (*tree format*) yang padat dan informatif:
+## 🖥️ Contoh Tampilan Terminal
 
 ```text
 Laporan visual HTML berhasil disimpan ke: ./schemaguard-report.html
 
-🛡️  SCHEMAGUARD AUDIT:  [BLOCKED] KRITIS  (Total 3 isu)
+🛡️ SCHEMAGUARD AUDIT: [BLOCKED] KRITIS (Total 3 isu)
 Skor Risiko: TINGGI (Downtime/Breaking) │ DDL Berisiko: 3 │ API Terdampak: 2
 ────────────────────────────────────────────────────────────────────────────────
-🗄️  STRUKTUR HIERARKI TEMUAN PENGUNCIAN & DAMPAK API:
-📦 users (Tabel)
-  ├── 🔴 Drop Column Statement [avatar_url] (ACCESS_EXCLUSIVE lock)
-  │   └── 🔗 GET /api/users (properti 'avatar_url')
-  └── 🔴 Alter Column Type [age] (ACCESS_EXCLUSIVE lock)
-      └── 🔗 GET /api/users (properti 'age')
-
-📦 orders (Tabel)
-  └── 🟡 Non-concurrent Index Creation [idx_orders_user] (SHARE lock)
+🗄️ STRUKTUR HIERARKI TEMUAN PENGUNCIAN & DAMPAK API:
+  📦 users (Tabel)
+     ├── 🔴 Drop Column Statement [avatar_url] (ACCESS_EXCLUSIVE lock)
+     │   └── 🔗 GET /api/users (properti 'avatar_url')
+     └── 🔴 Alter Column Type [age] (ACCESS_EXCLUSIVE lock)
+         └── 🔗 GET /api/users (properti 'age')
+  📦 orders (Tabel)
+     └── 🟡 Non-concurrent Index Creation [idx_orders_user] (SHARE lock)
 
 ⚠ Kontrak berkas OpenAPI tidak mengalami perubahan langsung, namun terdapat 2 endpoint yang terancam rusak akibat perubahan skema SQL.
 
-🛡️  PANDUAN LANGKAH MITIGASI RINGKAS (EXPAND & CONTRACT):
-  1. users.avatar_url:
-     • Expand  : Hentikan akses pada kode aplikasi terlebih dahulu, jadikan nullable/deprecated.
-     • Contract: Hapus fisik dari basis data setelah 100% armada rilis baru beroperasi.
-  2. users.age:
-     • Expand  : Tambah kolom bayangan ➔ pasang pemicu dual-write ➔ backfill bertahap (1k-5k baris/batch).
-     • Contract: Alihkan kueri baca ke kolom baru ➔ bersihkan pemicu & kolom lama ➔ ganti nama definitif.
-  3. orders (idx_orders_user):
-     • Tindakan: Buat indeks di luar blok transaksi tunggal menggunakan mode non-pemblokiran (CONCURRENTLY).
-
+🛡️ PANDUAN LANGKAH MITIGASI RINGKAS (EXPAND & CONTRACT):
+1. users.avatar_url:
+   - Expand : Hentikan akses pada kode aplikasi terlebih dahulu, jadikan nullable/deprecated.
+   - Contract: Hapus fisik dari basis data setelah 100% armada rilis baru beroperasi.
+2. users.age:
+   - Expand : Tambah kolom bayangan ➔ pasang pemicu dual-write ➔ backfill bertahap (1k-5k baris/batch).
+   - Contract: Alihkan kueri baca ke kolom baru ➔ bersihkan pemicu & kolom lama ➔ ganti nama definitif.
+3. orders (idx_orders_user):
+   - Tindakan: Buat indeks di luar blok transaksi tunggal menggunakan mode non-pemblokiran (CONCURRENTLY).
 ────────────────────────────────────────────────────────────────────────────────
 📄 Buka laporan lengkap & skrip SQL mandiri : file://./schemaguard-report.html
 💡 Lewati aturan jika terbukti aman         : schemaguard check --ignore-rule <id>
@@ -179,16 +152,16 @@ Skor Risiko: TINGGI (Downtime/Breaking) │ DDL Berisiko: 3 │ API Terdampak: 2
 
 ---
 
-## 🤖 Integrasi Alur Kerja GitHub Actions CI/CD
+## 🤖 Integrasi GitHub Actions (CI/CD Quality Gate)
 
-Integrasikan SchemaGuard sebagai gerbang kualitas (*Quality Gate*) otomatis pada berkas `.github/workflows/schemaguard.yml`:
+Pasang SchemaGuard sebagai penentu kelulusan *merge* pada berkas `.github/workflows/schemaguard.yml`:
 
 ```yaml
 name: SchemaGuard Quality Gate
 
 on:
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
 
 jobs:
   audit:
@@ -202,7 +175,7 @@ jobs:
       - name: Checkout Repositori
         uses: actions/checkout@v4
 
-      - name: Pasang Node.js
+      - name: Pasang Lingkungan Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -211,11 +184,14 @@ jobs:
       - name: Pasang Dependensi
         run: npm ci
 
+      - name: Kompilasi Proyek
+        run: npm run build
+
       - name: Jalankan Audit SchemaGuard
         run: |
-          npx schemaguard check \
-            --migrations ./migrations \
-            --api ./openapi.yaml \
+          node dist/index.js check \
+            --migrations ./examples \
+            --api ./examples/openapi.yaml \
             --html-report ./schemaguard-report.html \
             --fail-on CRITICAL
 
@@ -231,29 +207,42 @@ jobs:
 
 ## 🧪 Pengujian Unit
 
-SchemaGuard diverifikasi dengan **56 skenario pengujian unit ketat** menggunakan [Vitest](https://vitest.dev/):
+SchemaGuard diverifikasi menggunakan Vitest dengan cakupan pengujian modul menyeluruh:
 
 ```bash
 # Menjalankan seluruh rangkaian tes
 npm test
 
-# Menjalankan pengujian per modul
-npx vitest run tests/sqlDiff.test.ts        # 23 tests (Parser DDL, Lock Modes, Dialect Filters)
-npx vitest run tests/apiDiff.test.ts        # 15 tests (OpenAPI diff, $ref resolving, Cross-Impact)
-npx vitest run tests/recommender.test.ts    # 18 tests (Expand-Contract templates & recommendations)
+# Menjalankan pengujian spesifik per domain
+npx vitest run tests/sqlDiff.test.ts        # Parser DDL, Mode Kunci, Dialek SQL
+npx vitest run tests/apiDiff.test.ts        # Perbedaan OpenAPI, Resolusi $ref, Dampak Silang
+npx vitest run tests/recommender.test.ts    # Template Expand-Contract & Skrip Sintesis
 ```
 
 ---
 
 ## 📚 Referensi Praktik Rekayasa Industri
 
-- **PostgreSQL Explicit Locking**: https://www.postgresql.org/docs/current/explicit-locking.html
-- **Martin Fowler — Parallel Change (Expand and Contract)**: https://martinfowler.com/bliki/ParallelChange.html
-- **Stripe Engineering — Online Migrations at Scale**: https://stripe.com/blog/online-migrations
-- **GitLab Database Guides — Zero-Downtime Migrations**: https://docs.gitlab.com/ee/development/database/avoiding_downtime_in_migrations.html
+- **PostgreSQL Explicit Locking Documentation**: [postgresql.org/docs/current/explicit-locking.html](https://www.postgresql.org/docs/current/explicit-locking.html)
+- **Martin Fowler — Parallel Change (Expand and Contract Pattern)**: [martinfowler.com/bliki/ParallelChange.html](https://martinfowler.com/bliki/ParallelChange.html)
+- **Stripe Engineering — Online Migrations at Scale**: [stripe.com/blog/online-migrations](https://stripe.com/blog/online-migrations)
+- **GitLab Database Guides — Avoiding Downtime in Migrations**: [docs.gitlab.com/ee/development/database/avoiding_downtime_in_migrations.html](https://docs.gitlab.com/ee/development/database/avoiding_downtime_in_migrations.html)
+
+---
+
+## 👨‍💻 Penulis & Pengembang
+
+Proyek ini dirancang dan dikembangkan secara independen oleh:
+
+- **Choqy Sirait** — Software / Information Systems Engineer
+- **GitHub**: [@ChoqySirait](https://github.com/ChoqySirait)
+- **LinkedIn**: [linkedin.com/in/choqysirait](https://linkedin.com/in/choqysirait)
+- **Repositori**: [github.com/ChoqySirait/schemaguard](https://github.com/ChoqySirait/schemaguard)
+
+Terbuka untuk kolaborasi, diskusi arsitektur keandalan data (*database reliability*), serta peningkatan fitur perkakas pengembang.
 
 ---
 
 ## 📄 Lisensi
 
-Proyek ini didistribusikan di bawah lisensi **MIT**. Hak Cipta © 2026 SchemaGuard Contributors. Lihat berkas [LICENSE](LICENSE) untuk informasi lebih lanjut.
+Proyek ini didistribusikan di bawah lisensi MIT License. Hak Cipta © 2026 SchemaGuard Contributors. Lihat berkas [LICENSE](./LICENSE) untuk detail ketentuan lisensi.
