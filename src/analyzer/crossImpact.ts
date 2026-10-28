@@ -73,11 +73,9 @@ export function mapCrossImpact(
     const sqlTable = issue.table as string;
     const sqlCol = issue.column as string;
     const normalizedCol = normalizeName(sqlCol);
-    const normalizedTable = normalizeName(sqlTable);
 
     for (const { path: apiPath, method, operation } of operations) {
       const responses = operation.responses || {};
-      const normalizedPath = normalizeName(apiPath);
 
       // Kumpulkan seluruh properti respons yang dikembalikan oleh endpoint ini
       const endpointProperties = new Set<string>();
@@ -137,4 +135,41 @@ export function mapCrossImpactFromApiFile(
 ): CrossImpactLink[] {
   const apiSpec = parseOpenApiFile(apiFilePath);
   return mapCrossImpact(dbIssues, apiSpec);
+}
+
+/**
+ * Menyusun ringkasan status kompatibilitas API yang selaras dengan temuan dampak silang.
+ * Menghilangkan kontradiksi ketika berkas spesifikasi API tidak diubah langsung namun
+ * memiliki rute yang terancam rusak oleh penghapusan/perubahan kolom di SQL.
+ */
+export function getApiCompatibilityStatus(
+  apiIssuesCount: number,
+  crossImpactsCount: number = 0
+): {
+  isCompatible: boolean;
+  statusText: string;
+  hasIndirectBreakage: boolean;
+} {
+  if (apiIssuesCount === 0) {
+    if (crossImpactsCount > 0) {
+      return {
+        isCompatible: false,
+        hasIndirectBreakage: true,
+        statusText: `Kontrak berkas OpenAPI tidak mengalami perubahan langsung, namun terdapat ${crossImpactsCount} endpoint yang terancam rusak akibat perubahan skema SQL.`
+      };
+    }
+    return {
+      isCompatible: true,
+      hasIndirectBreakage: false,
+      statusText: 'Kontrak spesifikasi API sepenuhnya kompatibel ke belakang (backward-compatible).'
+    };
+  }
+
+  return {
+    isCompatible: false,
+    hasIndirectBreakage: crossImpactsCount > 0,
+    statusText: `Ditemukan ${apiIssuesCount} pelanggaran kontrak API langsung${
+      crossImpactsCount > 0 ? ` dan ${crossImpactsCount} endpoint terdampak perubahan skema SQL` : ''
+    }.`
+  };
 }
