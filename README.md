@@ -234,12 +234,11 @@ npx vitest run tests/recommender.test.ts    # Template Expand-Contract & Skrip S
 
 Proyek ini dirancang dan dikembangkan secara independen oleh:
 
-- **Choqy Sirait** — Software / Information Systems Engineer
+- **Choqy Pananda Sirait** — Information System Student
 - **GitHub**: [@ChoqySirait](https://github.com/ChoqySirait)
-- **LinkedIn**: [linkedin.com/in/choqysirait](https://linkedin.com/in/choqysirait)
 - **Repositori**: [github.com/ChoqySirait/schemaguard](https://github.com/ChoqySirait/schemaguard)
 
-Terbuka untuk kolaborasi, diskusi arsitektur keandalan data (*database reliability*), serta peningkatan fitur perkakas pengembang.
+Terbuka untuk kolaborasi dan diskusi
 
 ---
 
