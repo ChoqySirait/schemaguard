@@ -238,7 +238,7 @@ Proyek ini dirancang dan dikembangkan secara independen oleh:
 - **GitHub**: [@ChoqySirait](https://github.com/ChoqySirait)
 - **Repositori**: [github.com/ChoqySirait/schemaguard](https://github.com/ChoqySirait/schemaguard)
 
-Terbuka untuk kolaborasi dan diskusi
+Terbuka untuk kolaborasi dan diskusi seputar apapun itu
 
 ---
 
